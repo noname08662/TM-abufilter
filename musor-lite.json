@@ -1,0 +1,105 @@
+{
+  "version": "1.0",
+  "exportDate": "2025-11-23T07:30:06.436Z",
+  "scope": "board",
+  "threadRules": [
+    {
+      "pattern": "Главный новостной канал в Телеге",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "пиарпараши",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:изимод|blackpill|бл[еэ]кпил|TRUECEL|труцел|волцел|инцел|фемцел|жимцел|рынок пизд|ростошиз|внешк|говноглаз|челюг|!&еот|нормис|омежк|омеган|ч[еэ]д|ст[еэ]йси|претти|альфач|дайвинчик|познакомикс|лайк|биопроблемный|пиздострад|!&жен[^я][йт]?&!)~",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "био",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:!&тян&!|тян[оаус]?[чк]|тнус|сельд|селедк|проститут|богин|вайф|секс|писечк|!&РСП|милф|фембо|блогер|стример|пердикс|зумерш|твич|(?:встреча|нрав|влюб|целов|гуля|еба)~~~ (?:девушк|бабу|телк|шлюх)~)~",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "био",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:desktop|десктоп|speccy|anime|аниме|бугурт|АСТРАЛЬНОГО БУРА|ЭДИТОВ|МУЗЫКАЛЬНЫЙ|пкм|НЕЙРОКАРТИНОЧНЫЙ|пони|pony|dota|дота|видео|дружбо|кулинарный|чгк)~~-*(?:трен?д|thread)~",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "бот",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:webm|шебм|цуиь|в[еэ]бм|MP4|youtube\\scom|танцул|тик.?ток|santasosantach|лесополоса|субкота|zasmobos|gartic|рисовач|!&fap|!&фап|фап&!|!&afg|сигейм|армейк|военком|мигрант|пвз|маркетплейс|дискасс|реквестирую|плодячк|дабл|трипл|!&р[0oо]*лл?|!&r[0oо]*ll?|рулетка)~",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "бот",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "##(?:мнение|сейм~|отношение к|действия|мысли|чувств~|эмоции|что (?:ты )*(?:чувствуешь|можешь (?:ей|ему|им|дать))|почему (?:так&!|мы|вы|я|ты|он[аи]*)&!|в чем ~не прав~|а чего добили?с[ья]|хочу разобрать?ся|подводные|покажи (?:себя|сво~))@@",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "бот",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "##(?:помоги|дай|оцени|покажи|посоветуй|пустите в|любимых|есть кто (?:из|с)|!&с[оу][ур]с&!)~~",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "реквест",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:сброс~ листв~|узнал~ (?:себя|соглас)~|(?:базу|выдал~) (?:выдал~|базу)|как ~~коупи[шт]ь?)",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "бот",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "(?:признайся захотел|я ебал ваших мам|худших порноактрис|планирую вести себя|один будет тебя защищать|этот тред является храмом|всратая но шишка колом|как ебать такую|никогда не будет|сейчас буду наворачивать|морская улиточка)",
+      "flags": "iu",
+      "flagMask": 0,
+      "desc": "бот",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "[^@]+@~",
+      "flags": "",
+      "flagMask": 0,
+      "desc": "бугурт",
+      "preservePunct": true,
+      "expandCyrillic": false
+    }
+  ],
+  "replyRules": [
+    {
+      "pattern": "~~!&(?:б.мп&!|b.mp&!|r[o]*ll&!|р[о]*лл&!)",
+      "flags": "iu",
+      "flagMask": 32,
+      "desc": "бамп",
+      "preservePunct": false,
+      "expandCyrillic": true
+    },
+    {
+      "pattern": "^[\\d\\s]*$",
+      "flags": "iu",
+      "flagMask": 32,
+      "desc": "пусто",
+      "preservePunct": false,
+      "expandCyrillic": true
+    }
+  ]
+}
