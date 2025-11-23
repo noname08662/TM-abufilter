@@ -1,26 +1,17 @@
-name: lint
+name: eslint (npx)
+
 on: [push, pull_request]
 
-concurrency:
-  group: "eslint-${{ github.ref }}"
-  cancel-in-progress: true
-
 jobs:
-  eslint:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run ESLint (annotations)
-        run: npx eslint 'src/**' -f github
-
+      - name: Run ESLint (via npx)
+        run: npx eslint 'script.user.js' --max-warnings=0 -f github
