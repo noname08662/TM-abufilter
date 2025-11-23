@@ -184,7 +184,7 @@ const safeGet = HAS_GM
 const safeSet = HAS_GM
     ? (key, val) => {
         if (val === undefined) {
-            try { GM_deleteValue(key); } catch {}
+            try { GM_deleteValue(key); } catch { /**/ }
             return;
         }
         GM_setValue(key, val);
@@ -196,7 +196,7 @@ const safeSet = HAS_GM
             } else {
                 localStorage.setItem(key, JSON.stringify(val));
             }
-        } catch {}
+        } catch { /**/ }
     };
 
 
@@ -4009,7 +4009,7 @@ const openModal = (() => {
 				const mm = document.getElementById('tm-management-overlay');
 				if (mm) mm.classList.remove('tm-dimmed');
 				if (prevActive && typeof prevActive.focus === 'function') {
-					try { prevActive.focus(); } catch {}
+					try { prevActive.focus(); } catch { /**/ }
 				}
 			};
 
@@ -4157,8 +4157,8 @@ const openModal = (() => {
 
 		const getFocusableElements = () => {
 			return qsa(modal, focusableSelector).filter(el => {
-				try { return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)'); }
-				catch { return false; }
+				try return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)');
+				catch return false;
 			});
 		};
 
@@ -4565,7 +4565,7 @@ const openModal = (() => {
 			let m = null;
 			try {
 				m = filter.pattern.exec(normalized);
-			} catch (e) {
+			} catch {
 				return '';
 			}
 
