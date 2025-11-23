@@ -14,4 +14,4 @@ jobs:
           node-version: '20'
 
       - name: Run ESLint (via npx)
-        run: npx eslint 'script.user.js' --max-warnings=0 -f github
+        run: npx eslint 'TM_abufilter.js' --max-warnings=0 -f github
