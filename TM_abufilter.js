@@ -110,14 +110,14 @@ const h32 = s => {
 };
 
 const toArray = v => {
-	if (v == null) return [];
+	if (v === null) return [];
 
 	const arr = Array.isArray(v) ? v : [v];
 	const out = [];
 
 	for (let i = 0; i < arr.length; i++) {
 		const t = arr[i];
-		if (t == null) continue;
+		if (t === null) continue;
 		const s = ('' + t).trim();
 		if (s) out.push(s);
 	}
@@ -177,7 +177,7 @@ const safeGet = HAS_GM
     : (key, def = null) => {
         try {
             const s = localStorage.getItem(key);
-            return s == null ? def : JSON.parse(s);
+            return s === null ? def : JSON.parse(s);
         } catch { return def; }
     };
 
@@ -1648,7 +1648,7 @@ class OperationsManager {
             if (href !== undefined && el.getAttribute('href') !== href) el.setAttribute('href', href);
             if (dataset) {
                 for (const k in dataset) {
-                    const sval = dataset[k] == null ? '' : '' + dataset[k];
+                    const sval = dataset[k] === null ? '' : '' + dataset[k];
                     if (el.dataset[k] !== sval) el.dataset[k] = sval;
                 }
             }
@@ -3143,7 +3143,7 @@ class CrossTabSync {
         const a = Array.isArray(stateData) ? stateData : [];
         for (let i = 0; i < a.length; i++) {
             const e = a[i];
-            if (!e || e.length !== 2 || e[0] == null) continue;
+            if (!e || e.length !== 2 || e[0] === null) continue;
             const id = String(e[0]);
             const st = e[1] || {};
             const o = { f: st.flags >>> 0 };
@@ -6305,5 +6305,3 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
-
-
