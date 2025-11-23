@@ -2477,7 +2477,7 @@ class PostProcessor {
 
 		const PARTS = new WeakMap();
 		const DETAILS_INIT = new WeakSet();
-        const anon = 'Аноним';
+        const ANON_STR = 'Аноним';
         const isSpace = c => c === 32 || c === 160 || c === 9 || c === 10 || c === 13;
 
 		const topPart = (details, node) => {
@@ -2520,11 +2520,11 @@ class PostProcessor {
                     while (node) {
                         const next = node.nextSibling;
                         if (node.nodeType === Node.TEXT_NODE) {
-                            let s = node.data;
+                            const s = node.data;
                             let p = 0;
                             while (p < s.length && isSpace(s.charCodeAt(p))) p++;
-                            if (s.substr(p, anon.length) === anon) {
-                                let q = p + anon.length;
+                            if (s.substr(p, ANON_STR.length) === ANON_STR) {
+                                let q = p + ANON_STR.length;
                                 while (q < s.length && (s.charCodeAt(q) === 32 || s.charCodeAt(q) === 160)) q++;
                                 const newText = s.slice(0, p) + s.slice(q);
                                 if (newText.length) node.data = newText;
