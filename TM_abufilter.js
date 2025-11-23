@@ -2477,6 +2477,8 @@ class PostProcessor {
 
 		const PARTS = new WeakMap();
 		const DETAILS_INIT = new WeakSet();
+        const anon = 'Аноним';
+        const isSpace = c => c === 32 || c === 160 || c === 9 || c === 10 || c === 13;
 
 		const topPart = (details, node) => {
 			if (!node) return null;
@@ -2509,11 +2511,31 @@ class PostProcessor {
 				const decoded = decodeURIComponent(href.slice(7).split('?')[0] || '');
 				if (decoded && mail.textContent !== decoded) mail.textContent = decoded;
 			}
-			if (anon) {
-				const idEl = anon.querySelector('[id^="id_tag_"]');
-				if (idEl) anon.replaceChildren(idEl);
-				else if (!hasMailto) anon.remove();
-			}
+            if (anon) {
+                const idEl = anon.querySelector('[id^="id_tag_"]');
+                if (idEl) {
+                    anon.replaceChildren(idEl);
+                } else if (!hasMailto) {
+                    let node = anon.firstChild;
+                    while (node) {
+                        const next = node.nextSibling;
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            let s = node.data;
+                            let p = 0;
+                            while (p < s.length && isSpace(s.charCodeAt(p))) p++;
+                            if (s.substr(p, anon.length) === anon) {
+                                let q = p + anon.length;
+                                while (q < s.length && (s.charCodeAt(q) === 32 || s.charCodeAt(q) === 160)) q++;
+                                const newText = s.slice(0, p) + s.slice(q);
+                                if (newText.length) node.data = newText;
+                                else anon.removeChild(node);
+                            }
+                        }
+                        node = next;
+                    }
+                    if (!anon.firstElementChild && anon.textContent.trim() === '') anon.remove();
+                }
+            }
 			if (refl) {
 				let tn = refl.firstChild;
 				if (!tn || tn.nodeType !== 3) {
@@ -3222,7 +3244,6 @@ class CrossTabSync {
 
         for (const id in mPosts) {
             const post = Post.get(id); if (!post) continue;
-
             if (post.isHeader) headers.push(String(id));
             else replies.push(String(id));
         }
@@ -3233,15 +3254,22 @@ class CrossTabSync {
             let i = countH;
 
             while (i < headers.length) {
-                const post = Post.get(headers[i]); i++;
-				if (!post) continue;
-                if (CONFIG.AUTO_COLLAPSE_MEDIA_H) this.processor.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
-                else if (this.state.getMediaCollapsed(headers[i])?.reason !== 'manual') this.processor.toggleMedia(post, false);
+                const curId = headers[i];
+                const post = Post.get(curId);
+                i++;
+                if (!post) continue;
+
+                if (CONFIG.AUTO_COLLAPSE_MEDIA_H) {
+                    this.processor.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
+                } else if (this.state.getMediaCollapsed(curId)?.reason !== 'manual') {
+                    this.processor.toggleMedia(post, false);
+                }
                 this.processor.processPost(post);
+
                 if ((i & 7) === 0 && performance.now() >= deadlineH) break;
             }
-            countH = i;
 
+            countH = i;
             if (countH < headers.length) {
                 runIdle(stepHeaders, { timeout: 100 });
             } else {
@@ -3251,11 +3279,18 @@ class CrossTabSync {
                     let j = countR;
 
                     while (j < replies.length) {
-                        const post = Post.get(replies[j]); j++;
-						if (!post) continue;
-                        if (CONFIG.AUTO_COLLAPSE_MEDIA_P) this.processor.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
-                        else if (this.state.getMediaCollapsed(headers[j])?.reason !== 'manual') this.processor.toggleMedia(post, false);
+                        const curIdR = replies[j];
+                        const post = Post.get(curIdR);
+                        j++;
+                        if (!post) continue;
+
+                        if (CONFIG.AUTO_COLLAPSE_MEDIA_P) {
+                            this.processor.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
+                        } else if (this.state.getMediaCollapsed(curIdR)?.reason !== 'manual') {
+                            this.processor.toggleMedia(post, false);
+                        }
                         this.processor.processPost(post);
+
                         if ((j & 7) === 0 && performance.now() >= deadlineR) break;
                     }
                     countR = j;
@@ -3264,6 +3299,7 @@ class CrossTabSync {
                 runIdle(stepReplies, { timeout: 100 });
             }
         };
+
         runIdle(stepHeaders, { timeout: 100 });
     }
 
