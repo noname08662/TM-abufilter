@@ -4157,8 +4157,8 @@ const openModal = (() => {
 
 		const getFocusableElements = () => {
 			return qsa(modal, focusableSelector).filter(el => {
-				try return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)');
-				catch return false;
+				try { return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)'); }
+				catch { return false; }
 			});
 		};
 
