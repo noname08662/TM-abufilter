@@ -1714,7 +1714,7 @@ class OperationsManager {
             return;
         }
 
-        d.dataset = { kelly: next };
+        d.dataset = { ...d.dataset, kelly: next };
         d.classAdd = next;
         if (cur) d.classRemove = cur;
         this.queueWrite(el, d);
@@ -6305,3 +6305,4 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
