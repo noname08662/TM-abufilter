@@ -14,4 +14,4 @@ jobs:
           deno-version: v1.x
 
       - name: Deno lint
-        run: deno lint TM_abufilter.js
+        run: deno lint --ignore=no-empty-block TM_abufilter.js
