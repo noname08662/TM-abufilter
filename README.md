@@ -1,4 +1,4 @@
-Regex фильтр тредов и постов + небольшие твики по мелочи для имиджборды 2ch.
+Regex фильтр тредов и постов + небольшие твики по мелочи для имиджборды 2ch. Базовый набор говночиста для мгновенного импорта прилагается (musor-lite.json).
 <br>
 <img width="1671" height="871" alt="image" src="https://github.com/user-attachments/assets/cdde67f1-48c0-425e-bbf3-a2747a2c83aa" />
 <img width="1649" height="865" alt="image" src="https://github.com/user-attachments/assets/245c0d5d-40d1-4451-9a85-d218c5055afc" />
