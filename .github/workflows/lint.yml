@@ -1,4 +1,4 @@
-name: eslint (npx, discover files)
+name: deno-lint
 
 on: [push, pull_request]
 
@@ -6,33 +6,12 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
         with:
-          node-version: '20'
+          deno-version: v1.x
 
-      - name: Debug repo (quick)
-        run: |
-          echo "Current dir: $(pwd)"
-          echo "Git status:"
-          git status --porcelain
-          echo
-          echo "Tracked files (top-level):"
-          git ls-files | sed -n '1,200p'
-          echo
-          echo "Filesystem snapshot (top 200 lines):"
-          ls -la | sed -n '1,200p'
-
-      - name: Run ESLint on discovered JS files
-        run: |
-          set -euo pipefail
-          mapfile -d '' files < <(find . -type f \( -iname '*.user.js' -o -iname '*.js' \) -not -path './node_modules/*' -print0)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No .user.js or .js files found in workspace — skipping ESLint."
-            exit 0
-          fi
-          for f in "${files[@]}"; do printf " - %s\n" "$f"; done
-          npx eslint "${files[@]}" --max-warnings=0 -f github
+      - name: Deno lint
+        run: deno lint TM_abufilter.js
