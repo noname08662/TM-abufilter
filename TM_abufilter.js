@@ -2382,7 +2382,7 @@ class PostProcessor {
                 const id = String(link.dataset.num);
                 if (!id) return;
 
-                const pid = String(link.closest('.post[id^="post-"][data-num]')?.dataset.num || '');
+                const pid = String(link.closest('.post[data-num][id^="post-"], .post[data-num][id^="preview-"]')?.dataset.num || '');
                 if (!pid) return;
 
                 if (!this._clickedLinks.has(id)) {
@@ -6305,4 +6305,5 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
 
