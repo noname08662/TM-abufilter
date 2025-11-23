@@ -1,4 +1,4 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         TM abufilter
 // @description  Автоскрытие тредов и постов, относительное время, цветные рефки, и еще немного мелочи. GUI управление.
 // @namespace    obezyana_na_palke
@@ -24,7 +24,7 @@
 
 
 // ---------- BASIC HELPERS ----------
-const BOARD_ID = (window.location.pathname.split('/')[1] || 'default').replace(/[^\w-]/g, '');
+const BOARD_ID = (globalThis.location.pathname.split('/')[1] || 'default').replace(/[^\w-]/g, '');
 const BOARD_DATA_KEY = `tm_abufilter_${BOARD_ID}`;
 const RULES_SCOPE_KEY = `tm_abufilter_rules_scope_${BOARD_ID}`;
 const GLOBAL_FILTERS_KEY = 'tm_abufilter_global';
@@ -99,7 +99,7 @@ const DESC_MAP = {
 };
 
 const currentThreadId = (() => {
-    const match = window.location.pathname.match(/\/res\/(\d+)/);
+    const match = globalThis.location.pathname.match(/\/res\/(\d+)/);
     return match ? match[1] : null;
 })();
 
@@ -132,7 +132,7 @@ const escapeHtml = str => String(str || '')
     .replace(/>/g, '&gt;');
 
 
-const runIdle = (cb, timeout=250) => (window.requestIdleCallback ? window.requestIdleCallback(cb, { timeout }) : setTimeout(cb, 0));
+const runIdle = (cb, timeout=250) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(cb, { timeout }) : setTimeout(cb, 0));
 
 const getConfigStorageKey = (scope) => scope === 'global' ? 'tm_config_global' : `tm_config_${BOARD_ID}`;
 
@@ -1664,9 +1664,9 @@ class OperationsManager {
     }
 
     queueWrite(el, patch) {
-        let prev = this._domQueue.get(el);
-        let paClassAdd = patch.classAdd !== undefined ? toArray(patch.classAdd) : undefined;
-        let paClassRemove = patch.classRemove !== undefined ? toArray(patch.classRemove) : undefined;
+        const prev = this._domQueue.get(el);
+        const paClassAdd = patch.classAdd !== undefined ? toArray(patch.classAdd) : undefined;
+        const paClassRemove = patch.classRemove !== undefined ? toArray(patch.classRemove) : undefined;
 
         if (!prev) {
             if (paClassAdd !== undefined) patch.classAdd = paClassAdd;
@@ -1724,7 +1724,7 @@ class OperationsManager {
 
     _flushJsOps = () => {
         this._jsOpsRaf = 0;
-        for (const [key, op] of this._jsOpsQueue) {
+        for (const [_key, op] of this._jsOpsQueue) {
             op.fn.apply(null, op.args);
         }
         this._jsOpsQueue.clear();
@@ -1980,7 +1980,7 @@ class StateManager {
             return false;
         }
 
-        let rec = threadMap.get(text);
+        const rec = threadMap.get(text);
         if (!rec) {
             threadMap.set(text, { minNum: currentNum });
             return false;
@@ -2052,7 +2052,7 @@ class StateManager {
                 if (persistentState.flags !== 0) {
                     out.stateData.push([id, persistentState]);
                 }
-            } catch (e) {
+            } catch {
                 console.warn('[abufilter] Skipped corrupted state for id:', id);
                 continue;
             }
@@ -3366,7 +3366,7 @@ class CrossTabSync {
             }
         });
 
-        window.addEventListener('storage', (e) => {
+        globalThis.addEventListener('storage', (e) => {
             if (!e?.key) return;
             if ([
                 BOARD_DATA_KEY,
@@ -3504,7 +3504,7 @@ class Post {
             stripped = parts.length ? parts.join('\n') : '';
         }
 
-        const decoded = decode(stripped).replace(TAG_OR_BR_RE, (m, br) => br ? '\n' : '').trim();
+        const decoded = decode(stripped).replace(TAG_OR_BR_RE, (_m, br) => br ? '\n' : '').trim();
         const noPunct = decoded.replace(PUNCT_RE, '');
 
         this._cache[4 | mode] = decoded;
@@ -4009,7 +4009,7 @@ const openModal = (() => {
 				const mm = document.getElementById('tm-management-overlay');
 				if (mm) mm.classList.remove('tm-dimmed');
 				if (prevActive && typeof prevActive.focus === 'function') {
-					try { prevActive.focus(); } catch (e) {}
+					try { prevActive.focus(); } catch {}
 				}
 			};
 
@@ -4157,11 +4157,8 @@ const openModal = (() => {
 
 		const getFocusableElements = () => {
 			return qsa(modal, focusableSelector).filter(el => {
-				try {
-					return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)');
-				} catch (e) {
-					return false;
-				}
+				try { return el.offsetParent !== null && !el.closest('.tm-tab-content:not(.tm-tab-active)'); }
+				catch { return false; }
 			});
 		};
 
@@ -4319,7 +4316,6 @@ const openModal = (() => {
 						}
 						if (what === 'config' || what === 'both') {
 							const defs = [...CONFIG_DEFINITIONS.basic, ...CONFIG_DEFINITIONS.advanced];
-							const defMap = Object.fromEntries(defs.map(d => [d.key, d]));
 							const incomingCfg = (data && typeof data.config === 'object') ? data.config : {};
 							const current = loadConfigFromStorage(scope);
 							const cleaned = {};
@@ -4579,7 +4575,7 @@ const openModal = (() => {
 				map = alt.map;
 				try {
 					m = filter.pattern.exec(normalized);
-				} catch (e) {
+				} catch {
 					return '';
 				}
 				if (!m) return '';
@@ -5127,7 +5123,7 @@ const openModal = (() => {
 			</div>
 			<div class="tm-flags-dropdown"></div>
 		`;
-		const rulesFilterDD = createDropdown({
+		createDropdown({
 			container: filterDDDisplay,
 			options: [
 				{ label: 'Т+П', value: 'all' },
@@ -6083,7 +6079,7 @@ const openModal = (() => {
 let mPosts, sample, proto;
 const main = () => {
     const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    const narrowScreen = window.innerWidth <= 768;
+    const narrowScreen = globalThis.innerWidth <= 768;
     const mobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     const container = document.createElement('div');
@@ -6111,8 +6107,8 @@ const main = () => {
     postProcessor.initialize();
     crossTabSync.initialize();
 
-    window.addEventListener('beforeunload', () => scheduleSave.flush());
-    window.addEventListener('pagehide', () => scheduleSave.flush());
+    globalThis.addEventListener('beforeunload', () => scheduleSave.flush());
+    globalThis.addEventListener('pagehide', () => scheduleSave.flush());
 
     // makaba
     const cl = postProcessor._clickedLinks;
@@ -6211,7 +6207,7 @@ const main = () => {
                 const m = cb.toString().match(/^[^{]*\{([\s\S]*)\}$/);
                 if (m) {
                     return originalStage.call(this, name, id, type, () => {
-                        new Function(m[1].replace(/var\s+funcPostPreview\s*=\s*function/, 'window.funcPostPreview = function')).call(this);
+                        new Function(m[1].replace(/var\s+funcPostPreview\s*=\s*function/, 'globalThis.funcPostPreview = function')).call(this);
 
                         const origFuncPostPreview = unsafeWindow.funcPostPreview;
                         unsafeWindow.funcPostPreview = function(htm) {
