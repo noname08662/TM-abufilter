@@ -3592,6 +3592,7 @@ const openModal = (() => {
 	let isOpen = false, isTransitioning = false, pendingAction = null;
 
 	const activeTimers = new Set();
+	const notifyTimers = new Set();
 	const normalizeCache = new Map();
 
 	return (defaultTab = 'threads') => {
@@ -3952,22 +3953,22 @@ const openModal = (() => {
 				this.container.appendChild(notif);
 
 				const showTimer = setTimeout(() => {
-					activeTimers.delete(showTimer);
+					notifyTimers.delete(showTimer);
 					notif.classList.add('tm-notification-show');
 				}, 10);
-				activeTimers.add(showTimer);
+				notifyTimers.add(showTimer);
 
 				if (duration > 0) {
 					const hideTimer = setTimeout(() => {
-						activeTimers.delete(hideTimer);
+						notifyTimers.delete(hideTimer);
 						notif.classList.remove('tm-notification-show');
 						const removeTimer = setTimeout(() => {
-							activeTimers.delete(removeTimer);
+							notifyTimers.delete(removeTimer);
 							notif.remove();
 						}, 300);
-						activeTimers.add(removeTimer);
+						notifyTimers.add(removeTimer);
 					}, duration);
-					activeTimers.add(hideTimer);
+					notifyTimers.add(hideTimer);
 				}
 				return notif;
 			},
@@ -3976,10 +3977,10 @@ const openModal = (() => {
 				if (!node) return;
 				node.classList.remove('tm-notification-show');
 				const timer = setTimeout(() => {
-					activeTimers.delete(timer);
+					notifyTimers.delete(timer);
 					node.remove();
 				}, 300);
-				activeTimers.add(timer);
+				notifyTimers.add(timer);
 			},
 
 			loading(msg = 'Обработка', minVisibleMs = 800) {
@@ -3994,11 +3995,11 @@ const openModal = (() => {
 					dismissed = true;
 					const remaining = Math.max(0, minVisibleMs - (Date.now() - started));
 					const timer = setTimeout(() => {
-						activeTimers.delete(timer);
+						notifyTimers.delete(timer);
 						this.dismiss(n);
 						if (typeof next === 'function') next();
 					}, remaining);
-					activeTimers.add(timer);
+					notifyTimers.add(timer);
 				};
 			},
 
