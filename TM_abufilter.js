@@ -2,7 +2,7 @@
 // @name         TM abufilter
 // @description  Автоскрытие тредов и постов, относительное время, цветные рефки, и еще немного мелочи. GUI управление.
 // @namespace    obezyana_na_palke
-// @version      1.0
+// @version      1.1
 // @author       @noname08662
 // @match        *://2ch.su/*
 // @match        *://2ch.life/*
@@ -107,21 +107,6 @@ const h32 = s => {
     let h = 2166136261 >>> 0;
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
     return h >>> 0;
-};
-
-const toArray = v => {
-	if (v === null) return [];
-
-	const arr = Array.isArray(v) ? v : [v];
-	const out = [];
-
-	for (let i = 0; i < arr.length; i++) {
-		const t = arr[i];
-		if (t === null) continue;
-		const s = ('' + t).trim();
-		if (s) out.push(s);
-	}
-	return out;
 };
 
 const escapeHtml = str => String(str || '')
@@ -374,8 +359,6 @@ const TM_STYLE = (`
 .post__detailpart--op { order: 4; }
 .post__detailpart--mail { order: 5; }
 
-.post_preview.tm-collapsed .post__message { display: block !important; }
-
 .post_preview .tm-collapse-part,
 .post_type_oppost .tm-collapse-part { display: none !important; }
 
@@ -455,13 +438,11 @@ const TM_STYLE = (`
   --tm-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1.5 6.5 6 3.5-6 3.5V8.5z"/></svg>');
 }
 
-.tm-hidden,
-.tm-duplicate,
-.tm-filtered { display: none !important; }
+.tm-hidden { display: none !important; }
 
-.tm-collapsed .post__message,
-.tm-collapsed .post__images,
-.tm-collapsed .tm-media-part { display: none !important; }
+.tm-collapsed:not(.post_preview) .post__message,
+.tm-collapsed:not(.post_preview) .post__images,
+.tm-collapsed:not(.post_preview) .tm-media-part { display: none !important; }
 
 .tm-media-collapsed .post__images,
 .tm-media-collapsed .post__image-link,
@@ -1575,510 +1556,6 @@ input[type="number"].tm-nosnap { -moz-appearance: textfield; }
 `);
 
 
-// ---------- OPERATIONS MANAGER ----------
-class OperationsManager {
-    constructor() {
-        this._domRaf = 0;
-        this._domQueue = new Map();
-        this._jsOpsQueue = new Map();
-        this._jsOpsRaf = 0;
-    }
-
-    // ---------- debouncer ----------
-
-    createDebouncer(fn, delay, resetOnCall = false) {
-        let timeout = null;
-        let lastArgs = null;
-
-        const debounced = (...args) => {
-            lastArgs = args;
-            if (timeout && resetOnCall) {
-                clearTimeout(timeout);
-                timeout = null;
-            }
-            if (!timeout) {
-                timeout = setTimeout(() => {
-                    timeout = null;
-                    const argsToUse = lastArgs;
-                    lastArgs = null;
-                    fn(...argsToUse);
-                }, delay);
-            }
-        };
-
-        debounced.flush = () => {
-            if (timeout) {
-                clearTimeout(timeout);
-                timeout = null;
-            }
-            if (lastArgs) {
-                const argsToUse = lastArgs;
-                lastArgs = null;
-                fn(...argsToUse);
-            }
-        };
-
-        debounced.cancel = () => {
-            if (timeout) {
-                clearTimeout(timeout);
-                timeout = null;
-            }
-            lastArgs = null;
-        };
-
-        return debounced;
-    }
-
-    // ---------- dom ----------
-
-    _mergeClassList(base, incoming) {
-        if (!incoming.length) return base || incoming;
-        if (!base || !base.length) return incoming;
-        const set = new Set(base);
-        for (const c of incoming) set.add(c);
-        return Array.from(set);
-    }
-
-    _flushDom = () => {
-        this._domRaf = 0;
-        for (const [el, v] of this._domQueue) {
-            if (!el.isConnected) continue;
-            const { text, href, dataset, attrs, classAdd, classRemove } = v;
-            if (text !== undefined && el.textContent !== text) el.textContent = text;
-            if (href !== undefined && el.getAttribute('href') !== href) el.setAttribute('href', href);
-            if (dataset) {
-                for (const k in dataset) {
-                    const sval = dataset[k] === null ? '' : '' + dataset[k];
-                    if (el.dataset[k] !== sval) el.dataset[k] = sval;
-                }
-            }
-            if (attrs) {
-                for (const k in attrs) {
-                    if (el.getAttribute(k) !== attrs[k]) el.setAttribute(k, attrs[k]);
-                }
-            }
-            if (classRemove && classRemove.length) el.classList.remove(...classRemove);
-            if (classAdd && classAdd.length) el.classList.add(...classAdd);
-        }
-        this._domQueue.clear();
-    }
-
-    queueWrite(el, patch) {
-        const prev = this._domQueue.get(el);
-        const paClassAdd = patch.classAdd !== undefined ? toArray(patch.classAdd) : undefined;
-        const paClassRemove = patch.classRemove !== undefined ? toArray(patch.classRemove) : undefined;
-
-        if (!prev) {
-            if (paClassAdd !== undefined) patch.classAdd = paClassAdd;
-            if (paClassRemove !== undefined) patch.classRemove = paClassRemove;
-            this._domQueue.set(el, patch);
-        } else {
-            if (patch.dataset) {
-                const ds = prev.dataset || (prev.dataset = {});
-                for (const k in patch.dataset) ds[k] = patch.dataset[k];
-            }
-            if (patch.attrs) {
-                const as = prev.attrs || (prev.attrs = {});
-                for (const k in patch.attrs) as[k] = patch.attrs[k];
-            }
-            if (paClassAdd) prev.classAdd = this._mergeClassList(prev.classAdd || [], paClassAdd);
-            if (paClassRemove) prev.classRemove = this._mergeClassList(prev.classRemove || [], paClassRemove);
-            for (const k in patch) {
-                if (k === 'dataset' || k === 'attrs' || k === 'classAdd' || k === 'classRemove') continue;
-                prev[k] = patch[k];
-            }
-        }
-        if (!this._domRaf) this._domRaf = requestAnimationFrame(this._flushDom);
-    }
-
-    queueWriteWithKelly(el, num, desc) {
-        if (!el) return;
-        const d = desc || {};
-        const cur = el.dataset.kelly || '';
-        const n = parseInt(num, 10);
-
-        if (!Number.isFinite(n)) {
-            if (cur) {
-                d.classRemove = cur;
-                d.dataset = { kelly: '' };
-                this.queueWrite(el, d);
-            } else if (desc) {
-                this.queueWrite(el, d);
-            }
-            return;
-        }
-
-        const next = KELLY[n % KELLY_LEN];
-        if (cur === next) {
-            if (desc) this.queueWrite(el, d);
-            return;
-        }
-
-        d.dataset = { ...d.dataset, kelly: next };
-        d.classAdd = next;
-        if (cur) d.classRemove = cur;
-        this.queueWrite(el, d);
-    }
-
-    // ---------- js ----------
-
-    _flushJsOps = () => {
-        this._jsOpsRaf = 0;
-        for (const [_key, op] of this._jsOpsQueue) {
-            op.fn.apply(null, op.args);
-        }
-        this._jsOpsQueue.clear();
-    }
-
-    queueJsOp(key, fn, ...args) {
-        const existing = this._jsOpsQueue.get(key);
-        if (existing) {
-            existing.fn = fn;
-            existing.args = args;
-        } else {
-            this._jsOpsQueue.set(key, { fn, args });
-        }
-        if (!this._jsOpsRaf) return (this._jsOpsRaf = requestAnimationFrame(this._flushJsOps));
-    }
-
-    cancelJsOp(key) {
-        this._jsOpsQueue.delete(key);
-    }
-}
-const opsManager = new OperationsManager();
-
-// ---------- STATE MANAGER ----------
-class StateManager {
-    STATE_FLAGS = {
-        HIDDEN:          1 << 0,
-        COLLAPSED:       1 << 1,
-        WHITELIST:       1 << 2,
-        MEDIA_COLLAPSED: 1 << 3,
-        PASSTHROUGH:     1 << 4
-    };
-
-    constructor() {
-        this._state = new Map();
-        this._headerFirstId = new Map();
-        this._postMinIdByText = new Map();
-    }
-
-    // ---------- states ----------
-
-    _ensureState(id) {
-        let st = this._state.get(id);
-        if (!st) {
-            st = { flags: 0 };
-            this._state.set(id, st);
-        }
-        return st;
-    }
-
-    setHidden(id, payload = {}) {
-        if (!id) return;
-        const st = this._ensureState(id);
-        st.hidden = { ...st.hidden, ...payload };
-        st.flags |= this.STATE_FLAGS.HIDDEN;
-        this._state.set(id, st);
-    }
-
-    isHidden(id) {
-        const st = this._state.get(id);
-        return st && (st.flags & this.STATE_FLAGS.HIDDEN) !== 0;
-    }
-
-    getHidden(id) {
-        const st = this._state.get(id);
-        return st && st.hidden;
-    }
-
-    deleteHidden(id) {
-        const st = this._state.get(id);
-        if (!st) return;
-        st.flags &= ~this.STATE_FLAGS.HIDDEN;
-        delete st.hidden;
-        if (st.flags === 0) this._state.delete(id);
-        else this._state.set(id, st);
-    }
-
-    setCollapsed(id, payload = {}) {
-        if (!id) return;
-        const st = this._ensureState(id);
-        st.collapsed = { ...st.collapsed, ...payload };
-        st.flags |= this.STATE_FLAGS.COLLAPSED;
-        this._state.set(id, st);
-    }
-
-    isCollapsed(id) {
-        const st = this._state.get(id);
-        return st && (st.flags & this.STATE_FLAGS.COLLAPSED) !== 0;
-    }
-
-    getCollapsed(id) {
-        const st = this._state.get(id);
-        return st && st.collapsed;
-    }
-
-    deleteCollapsed(id) {
-        const st = this._state.get(id);
-        if (!st) return;
-        st.flags &= ~this.STATE_FLAGS.COLLAPSED;
-        delete st.collapsed;
-        if (st.flags === 0) this._state.delete(id);
-        else this._state.set(id, st);
-    }
-
-    setWhitelist(id, payload = {}) {
-        if (!id) return;
-        const st = this._ensureState(id);
-        st.whitelist = { ...st.whitelist, ...payload };
-        st.flags |= this.STATE_FLAGS.WHITELIST;
-        this._state.set(id, st);
-    }
-
-    isWhitelisted(id) {
-        const st = this._state.get(id);
-        return st && (st.flags & this.STATE_FLAGS.WHITELIST) !== 0;
-    }
-
-    getWhitelist(id) {
-        const st = this._state.get(id);
-        return st && st.whitelist;
-    }
-
-    deleteWhitelist(id) {
-		const st = this._state.get(id);
-        if (!st) return;
-        st.flags &= ~this.STATE_FLAGS.WHITELIST;
-        delete st.whitelist;
-        if (st.flags === 0) this._state.delete(id);
-        else this._state.set(id, st);
-    }
-
-    setMediaCollapsed(id, payload = {}) {
-        if (!id) return;
-        const st = this._ensureState(id);
-        st.mediaCollapsed = { ...st.mediaCollapsed, ...payload };
-        st.flags |= this.STATE_FLAGS.MEDIA_COLLAPSED;
-        this._state.set(id, st);
-    }
-
-    isMediaCollapsed(id) {
-        const st = this._state.get(id);
-        return st && (st.flags & this.STATE_FLAGS.MEDIA_COLLAPSED) !== 0;
-    }
-
-    getMediaCollapsed(id) {
-        const st = this._state.get(id);
-        return st && st.mediaCollapsed;
-    }
-
-    deleteMediaCollapsed(id) {
-        const st = this._state.get(id);
-        if (!st) return;
-        st.flags &= ~this.STATE_FLAGS.MEDIA_COLLAPSED;
-        delete st.mediaCollapsed;
-        if (st.flags === 0) this._state.delete(id);
-        else this._state.set(id, st);
-    }
-
-    setPassthrough(id, payload = {}) {
-        if (!id) return;
-        const st = this._ensureState(id);
-        st.passthrough = { ...st.passthrough, ...payload };
-        st.flags |= this.STATE_FLAGS.PASSTHROUGH;
-        this._state.set(id, st);
-    }
-
-    isPassthrough(id) {
-        const st = this._state.get(id);
-        return st && (st.flags & this.STATE_FLAGS.PASSTHROUGH) !== 0;
-    }
-
-    getPassthrough(id) {
-        const st = this._state.get(id);
-        return st && st.passthrough;
-    }
-
-    deletePassthrough(id) {
-        const st = this._state.get(id);
-        if (!st) return;
-        st.flags &= ~this.STATE_FLAGS.PASSTHROUGH;
-        delete st.passthrough;
-        if (st.flags === 0) this._state.delete(id);
-        else this._state.set(id, st);
-    }
-
-    deleteAll(id) {
-        this._state.delete(id);
-    }
-
-    // ---------- relations ----------
-
-    isTainted(id) {
-        const post = Post.get(id);
-        if (!post) return { tainted: false };
-
-        const visited = new Set();
-        const queue = [];
-
-        for (const pid of post.repliesTo) {
-			const key = String(pid);
-            if (!this.isPassthrough(key)) queue.push(key);
-        }
-
-        for (let i = 0; i < queue.length; i++) {
-			const curId = queue[i];
-            if (visited.has(curId)) continue;
-            visited.add(curId);
-
-            const st = this.getCollapsed(curId);
-            if (st && st.propagateTaint === true) {
-                return { tainted: true, rootId: curId };
-            }
-
-            const postR = Post.get(curId);
-            if (postR) {
-                for (const pid of postR.repliesTo) {
-					const key = String(pid);
-                    if (!this.isPassthrough(key)) queue.push(key);
-                }
-            }
-        }
-        return { tainted: false };
-    }
-
-    isDuplicate(id) {
-        const post = Post.get(id);
-        if (!post) return null;
-
-        const text = post.allP;
-        if (!text) return false;
-
-        const pid = post.num;
-        if (post.isHeader) {
-            const firstId = this._headerFirstId.get(text);
-            if (firstId === undefined) {
-                this._headerFirstId.set(text, pid);
-                return false;
-            }
-            return firstId !== pid;
-        }
-
-        const tid = post.threadId;
-        if (!tid) return false;
-
-        let threadMap = this._postMinIdByText.get(tid);
-        if (!threadMap) {
-            threadMap = new Map();
-            this._postMinIdByText.set(tid, threadMap);
-        }
-
-        const currentNum = Number(pid);
-        if (Number.isNaN(currentNum)) {
-            if (!threadMap.has(text)) threadMap.set(text, { minNum: Infinity });
-            return false;
-        }
-
-        const rec = threadMap.get(text);
-        if (!rec) {
-            threadMap.set(text, { minNum: currentNum });
-            return false;
-        }
-        if (rec.minNum < currentNum) return true;
-
-        if (currentNum < rec.minNum) rec.minNum = currentNum;
-        return false;
-    }
-
-    // ---------- util ----------
-
-    loadState() {
-        CONFIG = { ...DEFAULT_CONFIG, ...loadConfigFromStorage(getPreferredConfigScope()) };
-
-        const stored = safeGet(BOARD_DATA_KEY, {}) || {};
-        const raw = Array.isArray(stored.stateData) ? stored.stateData : [];
-        const now = Date.now();
-        const fresh = (sub) => sub && sub.time &&
-              (now - sub.time) <= (Number(CONFIG.DAYS_TO_KEEP) || DEFAULT_CONFIG.DAYS_TO_KEEP) * 86400000;
-        const shouldPersist = (sub) => sub && (sub.reason === 'manual' || !sub.reason);
-        const filtered = raw.filter(entry => {
-            if (!entry || entry.length !== 2) return false;
-            const [id, st] = entry;
-            if (!id || !st) return false;
-            return (st.whitelist && fresh(st.whitelist)) ||
-                (st.hidden && shouldPersist(st.hidden) && fresh(st.hidden)) ||
-                (st.collapsed && shouldPersist(st.collapsed) && fresh(st.collapsed)) ||
-                (st.mediaCollapsed && fresh(st.mediaCollapsed));
-        });
-        if (!filtered.length) {
-            this._state.clear();
-        } else {
-            this.loadFromStorage({ stateData: filtered });
-        }
-    }
-
-    serializeForStorage() {
-        const storedRules = safeGet(BOARD_DATA_KEY, {});
-        const out = {
-            stateData: [],
-            threadRules: Array.isArray(storedRules.threadRules) ? storedRules.threadRules : [],
-            replyRules: Array.isArray(storedRules.replyRules) ? storedRules.replyRules : []
-        };
-
-        for (const [id, st] of this._state.entries()) {
-            if (!id || typeof id !== 'string') continue;
-            if (!st || typeof st !== 'object') continue;
-
-            const persistentState = { flags: 0 };
-            try {
-                if (st.whitelist && typeof st.whitelist === 'object') {
-                    persistentState.whitelist = { ...st.whitelist };
-                    persistentState.flags |= this.STATE_FLAGS.WHITELIST;
-                }
-                if (st.hidden && typeof st.hidden === 'object' && st.hidden.reason === 'manual') {
-                    persistentState.hidden = { ...st.hidden };
-                    persistentState.flags |= this.STATE_FLAGS.HIDDEN;
-                }
-                if (st.collapsed && typeof st.collapsed === 'object' && st.collapsed.reason === 'manual') {
-                    persistentState.collapsed = { ...st.collapsed };
-                    persistentState.flags |= this.STATE_FLAGS.COLLAPSED;
-                }
-                if (st.mediaCollapsed && typeof st.mediaCollapsed === 'object' && st.mediaCollapsed.reason === 'manual') {
-                    persistentState.mediaCollapsed = { ...st.mediaCollapsed };
-                    persistentState.flags |= this.STATE_FLAGS.MEDIA_COLLAPSED;
-                }
-
-                if (persistentState.flags !== 0) {
-                    out.stateData.push([id, persistentState]);
-                }
-            } catch {
-                console.warn('[abufilter] Skipped corrupted state for id:', id);
-                continue;
-            }
-        }
-        return out;
-    }
-
-    loadFromStorage(data) {
-        if (!data || !Array.isArray(data.stateData)) return;
-
-        for (const entry of data.stateData) {
-            if (!entry || entry.length !== 2) continue;
-            const [id, st] = entry;
-            if (!id) continue;
-            this._state.set(id, st);
-        }
-    }
-
-    forEach(fn) {
-        for (const [id, st] of this._state.entries()) {
-            fn(id, st);
-        }
-    }
-}
-const stateManager = new StateManager();
-
 // ---------- FILTER ENGINE ----------
 class FilterEngine {
     PROPS_FLAG_BUILDER = [
@@ -2308,21 +1785,543 @@ class FilterEngine {
                 propagateTaint: ruleObj.propagateTaint
             };
         } catch (e) {
-	        console.error('[abufilter] Failed to construct filter object:', { source: 'filterEngine.constructFilterObj', error: e.message });
+	        console.error('[abufilter] Failed to construct filter object:', { source: 'filterEngine.constructFilterObj', error: e, stack: e?.stack });
             return null;
         }
     }
 }
 const filterEngine = new FilterEngine();
 
+// ---------- OPERATIONS MANAGER ----------
+class OperationsManager {
+    constructor() {
+        this._domRaf = 0;
+        this._domQueue = new Map();
+        this._jsOpsQueue = new Map();
+        this._jsOpsRaf = 0;
+
+		this.scheduleSave = this.createDebouncer(() => {
+			safeSet(BOARD_DATA_KEY, stateManager.serializeForStorage());
+		}, CONFIG.SAVE_DEBOUNCE, true);
+    }
+
+    // ---------- debouncer ----------
+
+    createDebouncer(fn, delay, resetOnCall = false) {
+        let timeout = null;
+        let lastArgs = null;
+
+        const debounced = (...args) => {
+            lastArgs = args;
+            if (timeout && resetOnCall) {
+                clearTimeout(timeout);
+                timeout = null;
+            }
+            if (!timeout) {
+                timeout = setTimeout(() => {
+                    timeout = null;
+                    const argsToUse = lastArgs;
+                    lastArgs = null;
+                    fn(...argsToUse);
+                }, delay);
+            }
+        };
+
+        debounced.flush = () => {
+            if (timeout) {
+                clearTimeout(timeout);
+                timeout = null;
+            }
+            if (lastArgs) {
+                const argsToUse = lastArgs;
+                lastArgs = null;
+                fn(...argsToUse);
+            }
+        };
+
+        debounced.cancel = () => {
+            if (timeout) {
+                clearTimeout(timeout);
+                timeout = null;
+            }
+            lastArgs = null;
+        };
+
+        return debounced;
+    }
+
+    // ---------- dom ----------
+
+    _toArray(v) {
+        if (v === null) return [];
+
+        const arr = Array.isArray(v) ? v : [v];
+        const out = [];
+
+        for (let i = 0; i < arr.length; i++) {
+            const t = arr[i];
+            if (t === null) continue;
+            const s = ('' + t).trim();
+            if (s) out.push(s);
+        }
+        return out;
+    }
+
+    _mergeClassList(base, incoming) {
+        if (!incoming.length) return base || incoming;
+        if (!base || !base.length) return incoming;
+        const set = new Set(base);
+        for (const c of incoming) set.add(c);
+        return Array.from(set);
+    }
+
+    _flushDom = () => {
+        this._domRaf = 0;
+        try {
+            for (const [el, v] of this._domQueue) {
+                if (!el.isConnected) continue;
+                const { text, href, dataset, attrs, classAdd, classRemove } = v;
+                if (text !== undefined && el.textContent !== text) el.textContent = text;
+                if (href !== undefined && el.getAttribute('href') !== href) el.setAttribute('href', href);
+                if (dataset) {
+                    for (const k in dataset) {
+                        const sval = dataset[k] === null ? '' : '' + dataset[k];
+                        if (el.dataset[k] !== sval) el.dataset[k] = sval;
+                    }
+                }
+                if (attrs) {
+                    for (const k in attrs) {
+                        if (el.getAttribute(k) !== attrs[k]) el.setAttribute(k, attrs[k]);
+                    }
+                }
+                if (classRemove && classRemove.length) el.classList.remove(...classRemove);
+                if (classAdd && classAdd.length) el.classList.add(...classAdd);
+            }
+        } finally {
+            this._domQueue.clear();
+        }
+    }
+
+    queueWrite(el, patch = {}) {
+        if (!el) return;
+
+        const prev = this._domQueue.get(el);
+        const paClassAdd = patch.classAdd !== undefined ? this._toArray(patch.classAdd) : undefined;
+        const paClassRemove = patch.classRemove !== undefined ? this._toArray(patch.classRemove) : undefined;
+
+        if (!prev) {
+            if (paClassAdd !== undefined) patch.classAdd = paClassAdd;
+            if (paClassRemove !== undefined) patch.classRemove = paClassRemove;
+            this._domQueue.set(el, patch);
+        } else {
+            if (patch.dataset) {
+                const ds = prev.dataset || (prev.dataset = {});
+                for (const k in patch.dataset) ds[k] = patch.dataset[k];
+            }
+            if (patch.attrs) {
+                const as = prev.attrs || (prev.attrs = {});
+                for (const k in patch.attrs) as[k] = patch.attrs[k];
+            }
+            if (paClassAdd) prev.classAdd = this._mergeClassList(prev.classAdd || [], paClassAdd);
+            if (paClassRemove) prev.classRemove = this._mergeClassList(prev.classRemove || [], paClassRemove);
+            for (const k in patch) {
+                if (k === 'dataset' || k === 'attrs' || k === 'classAdd' || k === 'classRemove') continue;
+                prev[k] = patch[k];
+            }
+        }
+        return (this._domRaf ||= requestAnimationFrame(this._flushDom));
+    }
+
+    queueWriteWithKelly(el, num, desc) {
+        if (!el) return;
+
+        const d = desc || {};
+        const cur = el.dataset.kelly || '';
+        const n = parseInt(num, 10);
+
+        if (!Number.isFinite(n)) {
+            if (cur) {
+                d.classRemove = cur;
+                d.dataset = { kelly: '' };
+                this.queueWrite(el, d);
+            } else if (desc) {
+                this.queueWrite(el, d);
+            }
+            return;
+        }
+
+        const next = KELLY[n % KELLY_LEN];
+        if (cur === next) {
+            if (desc) this.queueWrite(el, d);
+            return;
+        }
+
+        d.dataset = { ...d.dataset, kelly: next };
+        d.classAdd = next;
+        if (cur) d.classRemove = cur;
+        this.queueWrite(el, d);
+    }
+
+    // ---------- js ----------
+
+    _flushJsOps = () => {
+        const batch = new Map(this._jsOpsQueue);
+        this._jsOpsQueue.clear();
+        this._jsOpsRaf = 0;
+        for (const [_key, op] of batch) {
+            try { op.fn.apply(null, op.args); }
+            catch (e) { console.error('[abufilter] JS operation error', { source: 'OperationsManager._flushJsOps', error: e, stack: e?.stack}); }
+        }
+    }
+
+    queueJsOp(key, fn, ...args) {
+        const existing = this._jsOpsQueue.get(key);
+        if (existing) {
+            existing.fn = fn;
+            existing.args = args;
+        } else {
+            this._jsOpsQueue.set(key, { fn, args });
+        }
+        return (this._jsOpsRaf ||= requestAnimationFrame(this._flushJsOps));
+    }
+
+    cancelJsOp(key) {
+        this._jsOpsQueue.delete(key);
+    }
+}
+const opsManager = new OperationsManager();
+
+// ---------- EVENT EMITTER ----------
+class Emitter {
+    constructor() {
+        this.listeners = new Map();
+    }
+
+    on(event, callback) {
+        if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+        this.listeners.get(event).add(callback);
+        return () => this.off(event, callback);
+    }
+
+    off(event, callback) {
+        const set = this.listeners.get(event);
+        if (!set) return;
+        set.delete(callback);
+        if (set.size === 0) this.listeners.delete(event);
+    }
+
+    emit(event, payload) {
+        const set = this.listeners.get(event);
+        if (!set) return;
+        const listeners = Array.from(set);
+        for (const cb of listeners) {
+            try { cb(payload); }
+            catch (e) { console.error('[abufilter] Event emission error', { source: 'Emitter.emit', error: e, stack: e?.stack}); }
+        }
+    }
+}
+
+// ---------- STATE MANAGER ----------
+class StateManager extends Emitter {
+    STATE_FLAGS = {
+        HIDDEN:          1 << 0,
+        COLLAPSED:       1 << 1,
+        WHITELIST:       1 << 2,
+        MEDIA_COLLAPSED: 1 << 3,
+        PASSTHROUGH:     1 << 4
+    };
+
+    constructor(opsManager) {
+        super();
+		this.ops = opsManager;
+        this._state = new Map();
+        this._headerFirstId = new Map();
+        this._postMinIdByText = new Map();
+		this._emitQ = [];
+		this._emitScheduled = false;
+    }
+
+    // ---------- emission queue ----------
+
+	_enqueueEmit(evt) {
+		this._emitQ.push(evt);
+		if (!this._emitScheduled) {
+			this._emitScheduled = true;
+			this.ops.queueJsOp('state:flush', () => this._flushEmits());
+		}
+	}
+
+	_flushEmits() {
+		if (!this._emitQ.length) return;
+
+		const batch = this._emitQ.splice(0);
+		this._emitScheduled = false;
+
+		for (const ch of batch) {
+            if (ch.type) this.emit(ch.type, ch);
+		}
+	}
+
+    // ---------- state core ----------
+
+    _ensureState(id) {
+        let st = this._state.get(id);
+        if (!st) {
+            st = { flags: 0 };
+            this._state.set(id, st);
+        }
+        return st;
+    }
+
+    _updateState(id, flagMask, propName, payload, isSet) {
+		if (!id) return;
+
+		const st = isSet ? this._ensureState(id) : this._state.get(id);
+		if (!st && !isSet) return;
+
+		const hadFlag = (st.flags & flagMask) !== 0;
+		const prevSnapshot = hadFlag ? { ...(st[propName] || {}) } : null;
+
+		if (isSet && hadFlag) {
+			const currentData = st[propName] || {};
+			const newData = { ...currentData, ...payload };
+
+			let changed = false;
+			for (const k in newData) {
+				if (currentData[k] !== newData[k]) { changed = true; break; }
+			}
+			if (!changed) return;
+		}
+
+		if (isSet) {
+			st[propName] = { ...(st[propName] || {}), ...payload };
+			st.flags |= flagMask;
+		} else {
+			if (!hadFlag) return;
+			st.flags &= ~flagMask;
+			delete st[propName];
+		}
+
+		if (st.flags === 0) this._state.delete(id);
+		else this._state.set(id, st);
+
+		this._enqueueEmit({
+			id,
+			type: 'state:change',
+			state: propName,
+			prev: prevSnapshot,
+			next: isSet ? { ...(st[propName] || {}) } : null
+		});
+	}
+
+    // ---------- setters ----------
+
+    setHidden(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.HIDDEN, 'hidden', payload, true); }
+    deleteHidden(id) { this._updateState(id, this.STATE_FLAGS.HIDDEN, 'hidden', null, false); }
+    isHidden(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.HIDDEN) !== 0; }
+    getHidden(id) { const st = this._state.get(id); return st && st.hidden; }
+
+    setCollapsed(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.COLLAPSED, 'collapsed', payload, true); }
+    deleteCollapsed(id) { this._updateState(id, this.STATE_FLAGS.COLLAPSED, 'collapsed', null, false); }
+    isCollapsed(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.COLLAPSED) !== 0; }
+    getCollapsed(id) { const st = this._state.get(id); return st && st.collapsed; }
+
+    setWhitelist(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.WHITELIST, 'whitelist', payload, true); }
+    deleteWhitelist(id) { this._updateState(id, this.STATE_FLAGS.WHITELIST, 'whitelist', null, false); }
+    isWhitelisted(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.WHITELIST) !== 0; }
+    getWhitelist(id) { const st = this._state.get(id); return st && st.whitelist; }
+
+    setMediaCollapsed(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.MEDIA_COLLAPSED, 'mediaCollapsed', payload, true); }
+    deleteMediaCollapsed(id) { this._updateState(id, this.STATE_FLAGS.MEDIA_COLLAPSED, 'mediaCollapsed', null, false); }
+    isMediaCollapsed(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.MEDIA_COLLAPSED) !== 0; }
+    getMediaCollapsed(id) { const st = this._state.get(id); return st && st.mediaCollapsed; }
+
+    setPassthrough(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.PASSTHROUGH, 'passthrough', payload, true); }
+    deletePassthrough(id) { this._updateState(id, this.STATE_FLAGS.PASSTHROUGH, 'passthrough', null, false); }
+    isPassthrough(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.PASSTHROUGH) !== 0; }
+
+	deleteAll(id) {
+		if (this._state.has(id)) {
+			this._state.delete(id);
+			this._enqueueEmit({ id, type: 'state:clear' });
+		}
+	}
+
+    // ---------- relations ----------
+
+    isTainted(id) {
+        const post = Post.get(id);
+        if (!post) return { tainted: false };
+
+        const visited = new Set();
+        const queue = [];
+
+        for (const pid of post.repliesTo) {
+            const key = String(pid);
+            if (!this.isPassthrough(key)) queue.push(key);
+        }
+
+        for (let i = 0; i < queue.length; i++) {
+            const curId = queue[i];
+            if (visited.has(curId)) continue;
+            visited.add(curId);
+
+            const st = this.getCollapsed(curId);
+            if (st && st.propagateTaint === true) {
+                return { tainted: true, rootId: curId };
+            }
+
+            const postR = Post.get(curId);
+            if (postR) {
+                for (const pid of postR.repliesTo) {
+                    const key = String(pid);
+                    if (!this.isPassthrough(key)) queue.push(key);
+                }
+            }
+        }
+        return { tainted: false };
+    }
+
+    isDuplicate(id) {
+        const post = Post.get(id);
+        if (!post) return null;
+
+        const text = post.allP;
+        if (!text) return false;
+
+        const pid = post.num;
+
+        if (post.isHeader) {
+            const firstId = this._headerFirstId.get(text);
+            if (firstId === undefined) {
+                this._headerFirstId.set(text, pid);
+                return false;
+            }
+            return firstId !== pid;
+        }
+
+        const tid = post.threadId;
+        if (!tid) return false;
+
+        let threadMap = this._postMinIdByText.get(tid);
+        if (!threadMap) {
+            threadMap = new Map();
+            this._postMinIdByText.set(tid, threadMap);
+        }
+
+        const currentNum = Number(pid);
+        if (Number.isNaN(currentNum)) {
+            if (!threadMap.has(text)) threadMap.set(text, { minNum: Infinity });
+            return false;
+        }
+
+        const rec = threadMap.get(text);
+        if (!rec) {
+            threadMap.set(text, { minNum: currentNum });
+            return false;
+        }
+
+        if (rec.minNum < currentNum) return true;
+
+        if (currentNum < rec.minNum) rec.minNum = currentNum;
+        return false;
+    }
+
+    // ---------- Storage ----------
+
+    loadState() {
+        CONFIG = { ...DEFAULT_CONFIG, ...loadConfigFromStorage(getPreferredConfigScope()) };
+
+        const stored = safeGet(BOARD_DATA_KEY, {}) || {};
+        const raw = Array.isArray(stored.stateData) ? stored.stateData : [];
+        const now = Date.now();
+        const fresh = (sub) => sub && sub.time &&
+              (now - sub.time) <= (Number(CONFIG.DAYS_TO_KEEP) || DEFAULT_CONFIG.DAYS_TO_KEEP) * 86400000;
+        const shouldPersist = (sub) => sub && (sub.reason === 'manual' || !sub.reason);
+
+        const filtered = raw.filter(entry => {
+            if (!entry || entry.length !== 2) return false;
+            const [id, st] = entry;
+            if (!id || !st) return false;
+            return (st.whitelist && fresh(st.whitelist)) ||
+                (st.hidden && shouldPersist(st.hidden) && fresh(st.hidden)) ||
+                (st.collapsed && shouldPersist(st.collapsed) && fresh(st.collapsed)) ||
+                (st.mediaCollapsed && fresh(st.mediaCollapsed));
+        });
+        this._state.clear();
+        this.loadFromStorage({ stateData: filtered });
+    }
+
+    loadFromStorage(data) {
+        if (!data || !Array.isArray(data.stateData)) return;
+        for (const entry of data.stateData) {
+            if (!entry || entry.length !== 2) continue;
+            const [id, st] = entry;
+            if (!id) continue;
+            this._state.set(id, st);
+        }
+        //this.emit('state:load', { stateData: data.stateData });
+    }
+
+    serializeForStorage() {
+        const storedRules = safeGet(BOARD_DATA_KEY, {});
+        const out = {
+            stateData: [],
+            threadRules: Array.isArray(storedRules.threadRules) ? storedRules.threadRules : [],
+            replyRules: Array.isArray(storedRules.replyRules) ? storedRules.replyRules : []
+        };
+
+        for (const [id, st] of this._state.entries()) {
+            if (!id || typeof id !== 'string') continue;
+            if (!st || typeof st !== 'object') continue;
+
+            const persistentState = { flags: 0 };
+
+            if (st.whitelist && typeof st.whitelist === 'object') {
+                persistentState.whitelist = { ...st.whitelist };
+                persistentState.flags |= this.STATE_FLAGS.WHITELIST;
+            }
+            if (st.hidden && typeof st.hidden === 'object' && st.hidden.reason === 'manual') {
+                persistentState.hidden = { ...st.hidden };
+                persistentState.flags |= this.STATE_FLAGS.HIDDEN;
+            }
+            if (st.collapsed && typeof st.collapsed === 'object' && st.collapsed.reason === 'manual') {
+                persistentState.collapsed = { ...st.collapsed };
+                persistentState.flags |= this.STATE_FLAGS.COLLAPSED;
+            }
+            if (st.mediaCollapsed && typeof st.mediaCollapsed === 'object' && st.mediaCollapsed.reason === 'manual') {
+                persistentState.mediaCollapsed = { ...st.mediaCollapsed };
+                persistentState.flags |= this.STATE_FLAGS.MEDIA_COLLAPSED;
+            }
+
+            if (persistentState.flags !== 0) {
+                out.stateData.push([id, persistentState]);
+            }
+        }
+        return out;
+    }
+
+    forEach(fn) {
+        for (const [id, st] of this._state.entries()) {
+            fn(id, st);
+        }
+    }
+}
+const stateManager = new StateManager(opsManager);
+
 // ---------- PROCESSOR ----------
 class PostProcessor {
     constructor(stateManager, opsManager) {
         this.state = stateManager;
-		this.ops = opsManager;
+        this.ops = opsManager;
         this._clickedLinks = new Set();
         this._bound = false;
+
+        this.state.on('state:change', this.handleStateChange);
+        this.state.on('state:clear', this.handleStateClear);
     }
+
+    // ---------- init ----------
 
     initialize() {
         if (this._bound) return;
@@ -2339,19 +2338,23 @@ class PostProcessor {
 
                 const id = String(postEl.dataset.num);
                 if (!id) return;
+                const post = Post.get(id);
+                if (!post) return;
 
-                if (!postEl.classList.contains('tm-collapsed')) {
+                if (!this.state.isCollapsed(id)) {
                     this.state.deletePassthrough(id);
-                    if (this.processPost(Post.get(id))) {
-                        this.collapsePost(Post.get(id), {
+                    if (this.processPost(post)) {
+                        this.toggleCollapsed(post, true, {
                             reason: 'manual',
                             time: Date.now(),
                             propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
                         });
                     }
                 } else {
-                    if (this.state.getCollapsed(id)?.reason !== 'manual') this.state.setPassthrough(id);
-                    this.uncollapsePost(Post.get(id));
+                    if (this.state.getCollapsed(id)?.reason !== 'manual') {
+                        this.state.setPassthrough(id);
+                    }
+                    this.toggleCollapsed(post, false);
                 }
                 return;
             }
@@ -2367,9 +2370,13 @@ class PostProcessor {
                 const post = postEl.id.startsWith('preview-') ? Post.getPreview(id) : Post.get(id);
                 if (!post) return;
 
-                if (!postEl.classList.contains('tm-media-collapsed')) this.toggleMedia(post, true, { reason: 'manual', time: Date.now() });
-                else this.toggleMedia(post, false);
-
+                if (post.isPreview) {
+                    this.handleMedia(post, !postEl.classList.contains('tm-media-collapsed'));
+                } else if (!this.state.isMediaCollapsed(id)) {
+                    this.toggleMedia(post, true, { reason: 'manual', time: Date.now() });
+                } else {
+                    this.toggleMedia(post, false);
+                }
                 return;
             }
         }, { capture: true });
@@ -2382,28 +2389,30 @@ class PostProcessor {
                 const id = String(link.dataset.num);
                 if (!id) return;
 
-                const pid = String(link.closest('.post[data-num][id^="post-"], .post[data-num][id^="preview-"]')?.dataset.num || '');
+                const pid = String(link.closest('.post[data-num]')?.dataset.num || '');
                 if (!pid) return;
 
                 if (!this._clickedLinks.has(id)) {
-					this._clickedLinks.add(id);
-					const nodeList = document.querySelectorAll(
-						`.post-reply-link[data-num="${pid}"], .post-reply-link[data-num="${id}"],` +
-						`a.js-post-reply-btn.post__reflink[data-num="${pid}"], a.js-post-reply-btn.post__reflink[data-num="${id}"]`
-					);
-					for (let i = 0, L = nodeList.length; i < L; ++i) {
-						const l = nodeList[i];
-						this.ops.queueWrite(l, { classAdd: 'tm-clicked' });
-					}
-				}
+                    this._clickedLinks.add(id);
+
+                    const nodeList = document.querySelectorAll(
+                        `.post-reply-link[data-num="${pid}"], .post-reply-link[data-num="${id}"],` +
+                        `a.js-post-reply-btn.post__reflink[data-num="${pid}"], a.js-post-reply-btn.post__reflink[data-num="${id}"]`
+                    );
+                    for (let i = 0, L = nodeList.length; i < L; ++i) {
+                        this.ops.queueWrite(nodeList[i], { classAdd: 'tm-clicked' });
+                    }
+                }
             }, { passive: true });
         }
     }
 
+    // ---------- controls ----------
+
     handlePostDetails = {
         [true]: (post) => {
             const details = post.details;
-            if (!details || details.dataset.tm_cotrolsSet) return;
+            if (!details || details.dataset.tm_controlsSet) return;
             details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
             this._fmt(details, post); this._rt(details);
         },
@@ -2411,106 +2420,109 @@ class PostProcessor {
         [false]: (post) => { this._controlsIO.observe(post.el); }
     }
 
-	_controlsIO = new IntersectionObserver(entries => {
-		for (const entry of entries) {
-			if (!entry.isIntersecting) continue;
+    _controlsIO = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
 
             const postEl = entry.target;
-
-			const post = postEl.id.startsWith('preview-') ? Post.getPreview(postEl.dataset.num) : Post.get(postEl.dataset.num);
-			if (!post) continue;
+            const post = postEl.id.startsWith('preview-') ? Post.getPreview(postEl.dataset.num) : Post.get(postEl.dataset.num);
+            if (!post) continue;
 
             const details = post.details;
             if (!details) continue;
-            else if (details.dataset.tm_cotrolsSet) { this._controlsIO.unobserve(postEl); continue; }
-
+            if (details.dataset.tm_controlsSet) {
+                this._controlsIO.unobserve(postEl);
+                continue;
+            }
             details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
-            this._fmt(details, post); this._rt(details);
 
-            details.dataset.tm_cotrolsSet = '1';
+            this._fmt(details, post);
+            this._rt(details);
 
-			if (post._pendingSnippet) {
-				const { textOrId, isTaint } = post._pendingSnippet;
-				postProcessor.updateMatchSnippet(post, textOrId, isTaint);
-				post._pendingSnippet = null;
-			}
-			this._controlsIO.unobserve(postEl);
-		}
-	}, {
-		root: null,
-		rootMargin: '200px 200px',
-		threshold: 0.05,
-	});
+            details.dataset.tm_controlsSet = '1';
 
-	_fmt() {
-		if (!CONFIG.DETAILS_REFORMAT) {
-			if (trunc || colorize) {
-				return (details, post) => {
-					const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
-					if (!refl) return;
+            if (post._pendingSnippet) {
+                this.handleMatchSnippet(post);
+                post._pendingSnippet = null;
+            }
+            this._controlsIO.unobserve(postEl);
+        }
+    }, {
+        root: null,
+        rootMargin: '200px 200px',
+        threshold: 0.05,
+    });
 
-					let tn = refl.firstChild;
-					if (!tn || tn.nodeType !== 3) {
-						tn = document.createTextNode(refl.textContent || '');
-						refl.replaceChildren(tn);
-					}
+    _fmt() {
+        if (!CONFIG.DETAILS_REFORMAT) {
+            if (trunc || colorize) {
+                return (details, post) => {
+                    const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+                    if (!refl) return;
+
+                    let tn = refl.firstChild;
+                    if (!tn || tn.nodeType !== 3) {
+                        tn = document.createTextNode(refl.textContent || '');
+                        refl.replaceChildren(tn);
+                    }
                     const id = post.num;
-					const text = trunc ? (post.postNum || (id || tn.data).slice(-keep)) : (id || tn.data);
-					if (refl.dataset._lastTxt !== text) {
-						this.ops.queueJsOp('fmt' + id, () => {
-							tn.data = text;
-							refl.dataset._lastTxt = text;
-						});
-					}
+                    const text = trunc ? (post.postNum || (id || tn.data).slice(-keep)) : (id || tn.data);
+
+                    if (refl.dataset._lastTxt !== text) {
+                        this.ops.queueJsOp('fmt' + id, () => {
+                            tn.data = text;
+                            refl.dataset._lastTxt = text;
+                        });
+                    }
                     if (greyscale && this._clickedLinks.has(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
                     else if (colorize) this.ops.queueWriteWithKelly(refl, text);
-				};
-			} else if (greyscale) {
+                };
+            } else if (greyscale) {
                 return (details, post) => {
-					const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
-					if (!refl) return;
+                    const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+                    if (!refl) return;
                     if (this._clickedLinks.has(post.num)) this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
                 }
             }
-			return () => {};
-		}
+            return () => {};
+        }
 
-		const PARTS = new WeakMap();
-		const DETAILS_INIT = new WeakSet();
+        const PARTS = new WeakMap();
+        const DETAILS_INIT = new WeakSet();
         const ANON_STR = 'Аноним';
         const isSpace = c => c === 32 || c === 160 || c === 9 || c === 10 || c === 13;
 
-		const topPart = (details, node) => {
-			if (!node) return null;
-			let el = node;
-			while (el && el !== details) {
-				if (el.parentElement === details && el.classList?.contains('post__detailpart')) return el;
-				el = el.parentElement;
-			}
-			return null;
-		};
+        const topPart = (details, node) => {
+            if (!node) return null;
+            let el = node;
+            while (el && el !== details) {
+                if (el.parentElement === details && el.classList?.contains('post__detailpart')) return el;
+                el = el.parentElement;
+            }
+            return null;
+        };
 
-		const init = (details) => {
+        const init = (details) => {
             if (!details) return {};
-			if (DETAILS_INIT.has(details)) return PARTS.get(details);
+            if (DETAILS_INIT.has(details)) return PARTS.get(details);
 
-			const num = details.querySelector('.post__number');
-			const mail = details.querySelector('.post__email');
-			const anon = details.querySelector('.post__anon');
-			const refl = details.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+            const num = details.querySelector('.post__number');
+            const mail = details.querySelector('.post__email');
+            const anon = details.querySelector('.post__anon');
+            const refl = details.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
 
-			topPart(details, num )?.classList.add('post__detailpart--num');
-			topPart(details, refl)?.classList.add('post__detailpart--refl');
-			topPart(details, details.querySelector('.post__time'))?.classList.add('post__detailpart--time');
-			topPart(details, details.querySelector('.post__ophui'))?.classList.add('post__detailpart--op');
-			if (mail) topPart(details, mail)?.classList.add('post__detailpart--mail');
+            topPart(details, num )?.classList.add('post__detailpart--num');
+            topPart(details, refl)?.classList.add('post__detailpart--refl');
+            topPart(details, details.querySelector('.post__time'))?.classList.add('post__detailpart--time');
+            topPart(details, details.querySelector('.post__ophui'))?.classList.add('post__detailpart--op');
+            if (mail) topPart(details, mail)?.classList.add('post__detailpart--mail');
 
-			const hasMailto = !!(mail && (mail.getAttribute('href')||'').startsWith('mailto:'));
-			if (hasMailto) {
-				const href = mail.getAttribute('href');
-				const decoded = decodeURIComponent(href.slice(7).split('?')[0] || '');
-				if (decoded && mail.textContent !== decoded) mail.textContent = decoded;
-			}
+            const hasMailto = !!(mail && (mail.getAttribute('href')||'').startsWith('mailto:'));
+            if (hasMailto) {
+                const href = mail.getAttribute('href');
+                const decoded = decodeURIComponent(href.slice(7).split('?')[0] || '');
+                if (decoded && mail.textContent !== decoded) mail.textContent = decoded;
+            }
             if (anon) {
                 const idEl = anon.querySelector('[id^="id_tag_"]');
                 if (idEl) {
@@ -2536,24 +2548,24 @@ class PostProcessor {
                     if (!anon.firstElementChild && anon.textContent.trim() === '') anon.remove();
                 }
             }
-			if (refl) {
-				let tn = refl.firstChild;
-				if (!tn || tn.nodeType !== 3) {
-					tn = document.createTextNode(refl.textContent || '');
-					refl.replaceChildren(tn);
-				}
-				refl.dataset._lastTxt = tn.data;
-				refl._tn = tn;
-			}
+            if (refl) {
+                let tn = refl.firstChild;
+                if (!tn || tn.nodeType !== 3) {
+                    tn = document.createTextNode(refl.textContent || '');
+                    refl.replaceChildren(tn);
+                }
+                refl.dataset._lastTxt = tn.data;
+                refl._tn = tn;
+            }
 
-			const bundle = { num, refl, mail, anon };
-			PARTS.set(details, bundle);
-			DETAILS_INIT.add(details);
-			return bundle;
-		};
+            const bundle = { num, refl, mail, anon };
+            PARTS.set(details, bundle);
+            DETAILS_INIT.add(details);
+            return bundle;
+        };
 
-		if (trunc || colorize) {
-            const formatDetails = (details, post) => {
+        if (trunc || colorize) {
+            return (details, post) => {
                 const { num, refl } = init(details);
                 if (refl) {
                     const id = post.num;
@@ -2569,272 +2581,252 @@ class PostProcessor {
                     else if (colorize) this.ops.queueWriteWithKelly(refl, trunc ? text : id);
                 }
             };
-            return formatDetails;
         } else {
             return init;
         }
-	}
+    }
 
-	_rt() {
-		if (!CONFIG.RELATIVE_TIME) return () => {};
+    _rt() {
+        if (!CONFIG.RELATIVE_TIME) return () => {};
 
-		const rtf = Intl.RelativeTimeFormat
+        const rtf = Intl.RelativeTimeFormat
 			? new Intl.RelativeTimeFormat('ru', { numeric: 'auto', style: 'short' })
 			: null;
 
-		const fastParse = (t) => {
-			const dd = (t.charCodeAt(0)-48)*10 + (t.charCodeAt(1)-48);
-			const mm = (t.charCodeAt(3)-48)*10 + (t.charCodeAt(4)-48);
-			const yy = (t.charCodeAt(6)-48)*10 + (t.charCodeAt(7)-48);
-			const hh = (t.charCodeAt(t.length-8)-48)*10 + (t.charCodeAt(t.length-7)-48);
-			const mi = (t.charCodeAt(t.length-5)-48)*10 + (t.charCodeAt(t.length-4)-48);
-			const ss = (t.charCodeAt(t.length-2)-48)*10 + (t.charCodeAt(t.length-1)-48);
-			if (dd>=0 && dd<=31 && mm>=1 && mm<=12 && yy>=0 && yy<=99 && hh>=0 && hh<24 && mi>=0 && mi<60 && ss>=0 && ss<60) {
-				return new Date(2000 + yy, mm - 1, dd, hh, mi, ss);
-			}
-			return null;
-		};
+        const fastParse = (t) => {
+            const ts = Date.parse(t);
+            if(!isNaN(ts)) return new Date(ts);
 
-		const formatAbsolute = (d) => {
-			const pad2 = (n) => (n < 10 ? '0' + n : '' + n);
-			return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-		};
+            if(t.length < 16) return null;
+            const dd = (t.charCodeAt(0)-48)*10 + (t.charCodeAt(1)-48);
+            const mm = (t.charCodeAt(3)-48)*10 + (t.charCodeAt(4)-48);
+            const yy = (t.charCodeAt(6)-48)*10 + (t.charCodeAt(7)-48);
+            const len = t.length;
+            const ss = (t.charCodeAt(len-2)-48)*10 + (t.charCodeAt(len-1)-48);
+            const mi = (t.charCodeAt(len-5)-48)*10 + (t.charCodeAt(len-4)-48);
+            const hh = (t.charCodeAt(len-8)-48)*10 + (t.charCodeAt(len-7)-48);
 
-		const formatRelative = (dMs, nowMs) => {
-			const s = (dMs - nowMs) / 1000;
-			const a = Math.abs(s);
-			if (rtf) {
-				if (a < 45) return 'только что';
-				if (a < 3600) return rtf.format(Math.round(s / 60), 'minute');
-				if (a < 86400) return rtf.format(Math.round(s / 3600), 'hour');
-				const days = Math.round(s / 86400);
-				if (Math.abs(days) === 1) return s < 0 ? 'вчера' : 'завтра';
-				if (a < 604800) return rtf.format(days, 'day');
-				return rtf.format(Math.round(s / 604800), 'week');
-			} else {
-				const ago = s < 0 ? 'назад' : 'спустя';
-				if (a < 45) return 'только что';
-				if (a < 3600) return `${Math.round(a / 60)} мин ${ago}`;
-				if (a < 86400) return `${Math.round(a / 3600)} ч ${ago}`;
-				const days = Math.round(a / 86400);
-				if (days === 1) return s < 0 ? 'вчера' : 'завтра';
-				if (days < 7) return `${days} дн ${ago}`;
-				return formatAbsolute(new Date(dMs));
-			}
-		};
+            if (dd>=0 && dd<=31 && mm>=1 && mm<=12 && yy>=0 && yy<=99 && hh>=0 && hh<24 && mi>=0 && mi<60 && ss>=0 && ss<60) {
+                return new Date(2000 + yy, mm - 1, dd, hh, mi, ss);
+            }
+            return null;
+        };
+		
+		const pad2 = (n) => (n < 10 ? '0' + n : '' + n);
 
-		const C = new WeakMap();
+        const formatAbsolute = (d) => {
+            return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        };
 
-		const prime = (el) => {
-			let st = C.get(el);
-			if (st) return st;
-			const abs = el.dataset.tmAbsTime || el.textContent || '';
-			if (!el.dataset.tmAbsTime) el.dataset.tmAbsTime = abs;
+        const formatRelative = (dMs, nowMs) => {
+            const s = (dMs - nowMs) / 1000;
+            const a = Math.abs(s);
+            if (rtf) {
+                if (a < 45) return 'только что';
+                if (a < 3600) return rtf.format(Math.round(s / 60), 'minute');
+                if (a < 86400) return rtf.format(Math.round(s / 3600), 'hour');
+                const days = Math.round(s / 86400);
+                if (Math.abs(days) === 1) return s < 0 ? 'вчера' : 'завтра';
+                if (a < 604800) return rtf.format(days, 'day');
+                return rtf.format(Math.round(s / 604800), 'week');
+            } else {
+                const ago = s < 0 ? 'назад' : 'спустя';
+                if (a < 45) return 'только что';
+                if (a < 3600) return `${Math.round(a / 60)} мин ${ago}`;
+                if (a < 86400) return `${Math.round(a / 3600)} ч ${ago}`;
+                const days = Math.round(a / 86400);
+                if (days === 1) return s < 0 ? 'вчера' : 'завтра';
+                if (days < 7) return `${days} дн ${ago}`;
+                return formatAbsolute(new Date(dMs));
+            }
+        };
 
-			const d = fastParse(abs);
-			if (!d) return null;
+        const C = new WeakMap();
 
-			let tn = el.firstChild;
-			if (!tn || tn.nodeType !== 3) {
-				tn = document.createTextNode(el.textContent || '');
-				el.replaceChildren(tn);
-			}
+        const prime = (el) => {
+            let st = C.get(el);
+            if (st) return st;
+            const abs = el.dataset.tmAbsTime || el.textContent || '';
+            if (!el.dataset.tmAbsTime) el.dataset.tmAbsTime = abs;
 
-			st = { abs, dateMs: d.getTime(), tn, last: tn.data };
-			C.set(el, st);
-			return st;
-		};
+            const d = fastParse(abs);
+            if (!d) return null;
 
-		const updateAll = (root = document) => {
-			const nodes = root.getElementsByClassName('post__time');
-			if (!nodes.length) return;
-			const nowMs = Date.now();
-			for (let i = 0; i < nodes.length; i++) {
-				const el = nodes[i];
-				const st = C.get(el) || prime(el);
-				if (!st) continue;
-				const txt = formatRelative(st.dateMs, nowMs);
-				if (txt !== st.last) {
-					st.tn.data = txt;
-					st.last = txt;
+            let tn = el.firstChild;
+            if (!tn || tn.nodeType !== 3) {
+                tn = document.createTextNode(el.textContent || '');
+                el.replaceChildren(tn);
+            }
+
+            st = { abs, dateMs: d.getTime(), tn, last: tn.data };
+            C.set(el, st);
+            return st;
+        };
+
+        const updateAll = (root = document) => {
+            const nodes = root.getElementsByClassName('post__time');
+            if (!nodes.length) return;
+            const nowMs = Date.now();
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                const st = C.get(el) || prime(el);
+                if (!st) continue;
+                const txt = formatRelative(st.dateMs, nowMs);
+                if (txt !== st.last) {
+                    st.tn.data = txt;
+                    st.last = txt;
+                }
+            }
+        };
+
+        let timer = 0;
+        const schedule = () => {
+            clearTimeout(timer);
+            const now = Date.now();
+            const untilNext = 60000 - (now % 60000);
+            timer = setTimeout(() => {
+                updateAll();
+                schedule();
+            }, untilNext + 5);
+        };
+        schedule();
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                updateAll();
+                schedule();
+            } else {
+                clearTimeout(timer);
+            }
+        });
+
+        return (root) => {
+            const timeEl = root?.querySelector('.post__time');
+            if (!timeEl) return;
+            const st = C.get(timeEl) || prime(timeEl);
+            if (!st) return;
+            const txt = formatRelative(st.dateMs, Date.now());
+            if (txt !== st.last) {
+                st.tn.data = txt;
+                st.last = txt;
+            }
+        };
+    }
+
+    // ---------- events ----------
+
+    handleStateChange = ({ id, state, prev, next }) => {
+        if (next?.reason === 'manual' || prev?.reason === 'manual' || state === 'whitelist') this.ops.scheduleSave();
+
+        const post = Post.get(id);
+        if (!post) return;
+
+        switch (state) {
+            case 'hidden':
+                this.handleHidden(post, !!next);
+                break;
+            case 'collapsed':
+				this.handleCollapsed(post, !!next);
+				this.reprocessReplies(post);
+                break;
+            case 'mediaCollapsed':
+                this.handleMedia(post, !!next);
+                break;
+        }
+    };
+
+    handleStateClear = ({ id }) => {
+        const post = Post.get(id);
+        if (post) {
+            this.handleCollapsed(post, false);
+            this.handleMedia(post, false);
+            this.handleHidden(post, false);
+        }
+        this.ops.scheduleSave();
+    };
+
+    // ---------- actions ----------
+
+	toggleHidden(postOrId, on, state = {}) {
+		const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
+		if (on) {
+			this.state.deleteWhitelist(id);
+			this.state.setHidden(id, { ...state });
+		} else {
+			this.state.deleteHidden(id);
+			const post = typeof postOrId === 'object' ? postOrId : Post.get(id);
+			if (post && post.threadPosts) {
+				for (const pid of post.threadPosts) {
+					this.processPost(Post.get(pid));
 				}
 			}
-		};
-
-		let timer = 0;
-		const schedule = () => {
-			clearTimeout(timer);
-			const now = Date.now();
-			const untilNext = 60000 - (now % 60000);
-			timer = setTimeout(() => {
-				updateAll();
-				schedule();
-			}, untilNext + 5);
-		};
-		schedule();
-
-		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'visible') {
-				updateAll();
-				schedule();
-			} else {
-				clearTimeout(timer);
-			}
-		});
-
-		return (root) => {
-			const timeEl = root?.querySelector('.post__time');
-			if (!timeEl) return;
-			const st = C.get(timeEl) || prime(timeEl);
-			if (!st) return;
-			const txt = formatRelative(st.dateMs, Date.now());
-			if (txt !== st.last) {
-				st.tn.data = txt;
-				st.last = txt;
-			}
-		};
+		}
+		return true;
 	}
 
-    hideThread(postOrId, state = {}) {
-        const cls = state.cls || (
-            state.reason === 'filtered' ? 'tm-filtered' :
-            state.reason === 'duplicate' ? 'tm-duplicate' :
-            'tm-hidden'
-        );
-
-        if (!postOrId?.isHeader) {
-            const id = String(parseInt(postOrId, 10) || '');
-            this.state.deleteWhitelist(id);
-            this.state.setHidden(id, { ...state, cls });
-            scheduleSave();
-            return false;
-        }
-
-        const thread = postOrId.thread;
-        if (!thread) {
-            const id = String(parseInt(postOrId, 10) || '');
-            this.state.deleteWhitelist(id);
-            this.state.setHidden(id, { ...state, cls });
-            scheduleSave();
-            return false;
-        }
-
-        this.ops.queueWrite(thread, { classAdd: cls });
-        this.state.deleteWhitelist(postOrId.num);
-        this.state.setHidden(postOrId.num, { ...state, cls });
-        scheduleSave();
-        return true;
-    }
-
-    unhideThread(postOrId) {
-        if (!postOrId?.isHeader) {
-            this.state.deleteHidden(String(parseInt(postOrId, 10) || ''));
-            scheduleSave();
-            return false;
-        }
-
-        const thread = postOrId.thread;
-        if (!thread) {
-            this.state.deleteHidden(String(parseInt(postOrId, 10) || ''));
-            scheduleSave();
-            return false;
-        }
-
-        const st = this.state.getHidden(postOrId.num);
-        this.ops.queueWrite(thread, { classRemove: st?.cls ? ['tm-hidden', 'tm-filtered', 'tm-duplicate', st.cls] : ['tm-hidden', 'tm-filtered', 'tm-duplicate'] });
-        this.state.deleteHidden(postOrId.num);
-        for (const id of postOrId.threadPosts) this.processNewPost(Post.get(id));
-        scheduleSave();
-        return true;
-    }
-
-    collapsePost(postOrId, state = {}) {
-        if (!postOrId) return;
-        if (typeof postOrId === 'number' || typeof postOrId === 'string') {
-            this.state.setCollapsed(String(parseInt(postOrId, 10) || ''), state);
-            if (state?.reason === 'manual') scheduleSave();
-            return false;
-        }
-
-        this.state.setCollapsed(postOrId.num, state);
-        this.applyVisualState(postOrId, { state: 'collapsed', ...state });
-        this.ops.queueJsOp('reprocess:' + postOrId.num, this.reprocessReplies.bind(this), postOrId, true);
-        if (state?.reason === 'manual') scheduleSave();
-        return true;
-    }
-
-    uncollapsePost(postOrId) {
-        if (!postOrId) return;
-        if (typeof postOrId === 'number' || typeof postOrId === 'string') {
-            this.state.deleteCollapsed(String(parseInt(postOrId, 10) || ''));
-            if (this.state.getCollapsed(postOrId.num)?.reason === 'manual') scheduleSave();
-            return false;
-        }
-
-        const reason = this.state.getCollapsed(postOrId.num)?.reason;
-        this.state.deleteCollapsed(postOrId.num);
-        this.applyVisualState(postOrId, { state: 'visible' });
-        this.ops.queueJsOp('reprocess:' + postOrId.num, this.reprocessReplies.bind(this), postOrId, false);
-        if (reason === 'manual') scheduleSave();
-        return true;
-    }
+	toggleCollapsed(postOrId, on, state = {}) {
+		const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
+		if (on) this.state.setCollapsed(id, state);
+		else this.state.deleteCollapsed(id);
+		return true;
+	}
 
     toggleWhitelist(postOrId, on, state = {}) {
-        if (!postOrId) return;
-        if (typeof postOrId === 'number' || typeof postOrId === 'string') {
-            const id = String(parseInt(postOrId, 10) || '');
-            if (on) {
-                if (typeof state === 'object' && Object.keys(state).length > 0) {
-                    this.state.setWhitelist(id, { ...state });
-                } else {
-                    const st = this.state.getHidden(id);
-                    this.state.setWhitelist(id, {
-                        id,
-                        time: Date.now(),
-                        matchChunk: st?.matchChunk,
-                        fullText: st?.fullText || postOrId?.allP
-                    });
-                }
-            } else {
-                this.state.deleteAll(id);
-            }
-            scheduleSave();
-            return;
-        }
-
-        const id = postOrId.num;
+        const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
         if (on) {
-            if (this.state.isWhitelisted(id)) return;
-            if (typeof state === 'object' && Object.keys(state).length > 0) {
-                this.state.setWhitelist(id, { ...state });
-            } else {
-                const st = this.state.getHidden(id);
-                this.state.setWhitelist(id, {
-                    id,
-                    time: Date.now(),
-                    matchChunk: st?.matchChunk,
-                    fullText: st?.fullText || postOrId?.allP
-                });
-            }
-            if (currentThreadId !== id) this.unhideThread(postOrId);
-        } else if (this.state.isWhitelisted(id)) {
+            const st = this.state.getHidden(id);
+            this.state.setWhitelist(id, {
+                id,
+                time: Date.now(),
+                matchChunk: st?.matchChunk,
+                fullText: st?.fullText || Post.get(id)?.allP,
+                ...state
+            });
+            if (this.state.isHidden(id)) this.toggleHidden(postOrId, false);
+        } else {
             this.state.deleteAll(id);
-            if (currentThreadId || this.processPost(postOrId)) scheduleSave();
+			this.processPost(Post.get(id));
         }
     }
 
-    toggleMedia(post, collapse, state = {}) {
-        if (!post) return false;
+    toggleMedia(postOrId, on, state = {}) {
+        const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
+        if (on) this.state.setMediaCollapsed(id, state);
+        else this.state.deleteMediaCollapsed(id);
+    }
 
-        const el = post.el;
-        if (!el) return false;
+    // ---------- visual ----------
 
+    handleHidden(post, on) {
+        const target = (post.isHeader || post.thread) ? (post.thread || post.el) : post.el;
+        if (!target) return;
+        if (on) {
+            if (currentThreadId !== post.num) this.ops.queueWrite(target, { classAdd: 'tm-hidden' });
+        } else {
+            this.ops.queueWrite(target, { classRemove: 'tm-hidden' });
+        }
+    }
+
+    handleCollapsed(post, on) {
+        if (!post?.el) return;
+        if (on) {
+            this.ops.queueWrite(post.el, { classAdd: 'tm-collapsed' });
+            this.handleMatchSnippet(post);
+        } else if (this.state.isPassthrough(post.num)) {
+            this.ops.queueWrite(post.el, { classRemove: 'tm-collapsed' });
+        } else {
+            this.ops.queueWrite(post.el, { classRemove: 'tm-collapsed' });
+            this.handleMatchSnippet(post);
+        }
+    }
+
+    handleMedia(post, on) {
+        const el = post?.el;
         const images = post.images;
-        if (!images) return true;
+        if (!el || !images) return;
 
         const msg = post.message;
-        if (collapse) {
-            if (!post.isPreview) this.state.setMediaCollapsed(post.num, state);
+        if (on) {
             this.ops.queueWrite(el, { classAdd: 'tm-media-collapsed' });
 
             const typeClasses = Array.from(images.classList).filter(c => c.startsWith('post__images_type_'));
@@ -2844,13 +2836,10 @@ class PostProcessor {
             }
             if (msg) {
                 const isEmpty = !/\S/.test((msg.textContent || '').replace(/\u00A0/g, ' ')) &&
-                    (msg.children.length === 0 || ([...msg.children].every(c => c.tagName === 'BR')));
+                      (msg.children.length === 0 || ([...msg.children].every(c => c.tagName === 'BR')));
                 if (isEmpty) this.ops.queueWrite(msg, { classAdd: 'tm-element-hidden' });
             }
-            if (state?.reason === 'manual') scheduleSave();
         } else {
-            const reason = this.state.getMediaCollapsed(post.num)?.reason;
-            if (!post.isPreview) this.state.deleteMediaCollapsed(post.num);
             this.ops.queueWrite(el, { classRemove: 'tm-media-collapsed' });
 
             const was = images.dataset.tmWasTypes;
@@ -2859,87 +2848,221 @@ class PostProcessor {
                 delete images.dataset.tmWasTypes;
             }
             if (msg) this.ops.queueWrite(msg, { classRemove: 'tm-element-hidden' });
-            if (reason === 'manual') scheduleSave();
         }
-        return true;
     }
 
-    updateMatchSnippet(post, textOrId, isTaint) {
-        this.ops.queueJsOp('snippet:' + post.num, this._updateMatchSnippet.bind(this), post, textOrId, isTaint);
-    }
+    handleMatchSnippet(post) {
+		if (!post) return;
 
-    _updateMatchSnippet(post, textOrId, isTaint) {
         const wrap = post.el?.querySelector('.tm-snippet-part');
         if (!wrap) {
-            post._pendingSnippet = { textOrId, isTaint };
+			post._pendingSnippet = true;
             return;
         }
 
         const link = wrap.querySelector('a.post-reply-link');
         const snippet = wrap.querySelector('.tm-match-snippet--text');
-
         if (!link || !snippet) return;
-        if (!textOrId) {
+
+        if (!this.state.isCollapsed(post.num)) {
             this.ops.queueWrite(link, { classAdd: 'tm-element-hidden' });
             this.ops.queueWrite(snippet, { classAdd: 'tm-element-hidden' });
             return;
         }
 
-        if (isTaint) {
+		const st = this.state.getCollapsed(post.num);
+		const text = st.desc || st.snippet || st.reason || '';
+        if (st.reason === 'tainted') {
             const threadId = post.threadId || '';
-            const n = trunc ? String(Post.get(textOrId)?.postNum || textOrId.slice(-keep)) : textOrId;
+            const n = trunc ? String(Post.get(text)?.postNum || text.slice(-keep)) : text;
 
-            if (greyscale && this._clickedLinks.has(textOrId)) {
-                this.ops.queueWrite(link, {
-                    text: `>>${n}`,
-                    href: `/${BOARD_ID}/res/${threadId}.html#${textOrId}`,
-                    dataset: { num: textOrId, thread: threadId },
-                    classAdd: 'tm-clicked',
-                    classRemove: 'tm-element-hidden'
-                });
+            const baseConfig = {
+                text: `>>${n}`,
+                href: `/${BOARD_ID}/res/${threadId}.html#${text}`,
+                dataset: { num: text, thread: threadId },
+                classRemove: 'tm-element-hidden'
+            };
+
+            if (greyscale && this._clickedLinks.has(text)) {
+                this.ops.queueWrite(link, { ...baseConfig, classAdd: 'tm-clicked' });
             } else if (colorize) {
-                this.ops.queueWriteWithKelly(link, n, {
-                    text: `>>${n}`,
-                    href: `/${BOARD_ID}/res/${threadId}.html#${textOrId}`,
-                    dataset: { num: textOrId, thread: threadId },
-                    classRemove: 'tm-element-hidden'
-                });
+                this.ops.queueWriteWithKelly(link, n, baseConfig);
             } else {
-                this.ops.queueWrite(link, {
-                    text: `>>${n}`,
-                    href: `/${BOARD_ID}/res/${threadId}.html#${textOrId}`,
-                    dataset: { num: textOrId, thread: threadId },
-                    classRemove: 'tm-element-hidden'
-                });
+                this.ops.queueWrite(link, baseConfig);
             }
             this.ops.queueWrite(snippet, { classAdd: 'tm-element-hidden' });
-            return;
-        }
 
-        this.ops.queueWrite(link, { classAdd: 'tm-element-hidden' });
-        this.ops.queueWrite(snippet, {
-            text: `(${DESC_MAP[textOrId] || (textOrId.length > CONFIG.MAX_SNIPPET_LENGTH ? textOrId.slice(0, CONFIG.MAX_SNIPPET_LENGTH) + '...' : textOrId)})`,
-            classRemove: 'tm-element-hidden'
-        });
-    }
-
-    applyVisualState(post, state) {
-        if (!post?.el || !state) return;
-
-        if (state.state === 'collapsed') {
-            this.ops.queueWrite(post.el, { classAdd: 'tm-collapsed' });
-            this.updateMatchSnippet(post, state.desc || state.snippet || state.reason, state.reason === 'tainted');
-        } else if (this.state.isPassthrough(post.num)) {
-            this.ops.queueWrite(post.el, { classRemove: 'tm-collapsed' });
         } else {
-            this.ops.queueWrite(post.el, { classRemove: 'tm-collapsed' });
-            this.updateMatchSnippet(post, '');
+            this.ops.queueWrite(link, { classAdd: 'tm-element-hidden' });
+            this.ops.queueWrite(snippet, {
+                text: `(${DESC_MAP[text] || (text.length > CONFIG.MAX_SNIPPET_LENGTH ? text.slice(0, CONFIG.MAX_SNIPPET_LENGTH) + '...' : text)})`,
+                classRemove: 'tm-element-hidden'
+            });
         }
     }
 
-    reprocessReplies(post, isCollapsed) {
+    handleLink(l, id, label, isYou) {
+        const txt = label + (isYou ? ' (You)' : '');
+        if (greyscale && this._clickedLinks.has(id)) {
+            this.ops.queueWrite(l, { text: txt, classAdd: 'tm-clicked' });
+        } else if (colorize) {
+            this.ops.queueWriteWithKelly(l, id, { text: txt });
+        } else {
+            this.ops.queueWrite(l, { text: txt });
+        }
+    }
+
+    // ---------- processors ----------
+
+    registerNewPost(p) { return this.processNewPost(new Post(p)); }
+
+    processNewPost(post) {
+        if (!post?.el) return false;
+
+        const id = post.num;
+        const threadId = post.threadId;
+
+        if (this.state.isHidden(id)) this.handleHidden(post, true);
+		if (this.state.isCollapsed(id)) this.handleCollapsed(post, true);
+        if (this.state.isMediaCollapsed(id)) this.handleMedia(post, true);
+
+        const isMyPost = post.isMyPost;
+        if (isMyPost && !this._clickedLinks.has(id)) {
+            this._clickedLinks.add(id);
+            if (CONFIG.WHITELIST_PARTICIPATED) {
+                const st = this.state.getHidden(threadId);
+                if (!st || st.reason !== 'manual') this.toggleWhitelist(threadId, true);
+            }
+            if (greyscale && !this._globalScanHandle) {
+                this._globalScanHandle = this.ops.queueJsOp('greyscale:global', () => {
+                    this._globalScanHandle = null;
+                    const nodes = document.querySelectorAll('.post-reply-link[data-num], a.js-post-reply-btn.post__reflink[data-num]');
+                    for (let i = 0, L = nodes.length; i < L; ++i) {
+                        const ln = nodes[i];
+                        if (this._clickedLinks.has(String(ln.dataset.num || ''))) {
+                            this.ops.queueWrite(ln, { classAdd: 'tm-clicked' });
+                        }
+                    }
+                });
+            }
+        }
+
+        if (trunc || colorize || greyscale) {
+            const outLinks = post.outLinks || [];
+            for (let i = 0; i < outLinks.length; ++i) {
+                const l = outLinks[i];
+                const rid = String(l.dataset.num || '');
+                const postR = Post.get(rid);
+
+                if (isMyPost) this._clickedLinks.add(rid);
+                if (trunc) {
+                    this.handleLink(l, rid, (rid === threadId) ? '>>OP' : `>>${String(postR?.postNum || rid.slice(-keep))}`, postR?.isMyPost);
+                } else if (postR?.isMyPost || (greyscale && this._clickedLinks.has(rid))) {
+                    this.handleLink(l, rid, `>>${rid}`, postR?.isMyPost);
+                } else if (colorize) {
+                    this.ops.queueWriteWithKelly(l, rid);
+                }
+            }
+        }
+
+        this.handlePostDetails[CONFIG.INSTANT_DETAILS || null]?.(post);
+
+        if (!this.state.isMediaCollapsed(id)) {
+            if (post.isHeader ? CONFIG.AUTO_COLLAPSE_MEDIA_H : CONFIG.AUTO_COLLAPSE_MEDIA_P) {
+                this.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
+            }
+        }
+
+        if (this.state.isHidden(id)) return false;
+        if (this.state.isCollapsed(id)) return false;
+
+        this.processPost(post);
+        return post;
+    }
+
+    processPost(post) {
+        if (!post) return false;
+
+        const id = post.num;
+        if (currentThreadId !== id && !this.state.isWhitelisted(id)) {
+            if (this.state.isPassthrough(id)) return true;
+
+            const isHeader = post.isHeader;
+			if (isHeader ? this.state.getHidden(id)?.reason === 'manual'
+						: this.state.getCollapsed(id)?.reason === 'manual') return false;
+			const matchResult = post.getMatch();
+
+			if (matchResult?.matched) {
+				const { desc, matched, filter, propagateTaint } = matchResult;
+				if (isHeader) {
+					this.toggleHidden(post, true, {
+						reason: 'filtered',
+						desc,
+						filter,
+						fullText: post.allP,
+						time: Date.now()
+					});
+				} else {
+					this.toggleCollapsed(post, true, {
+						reason: 'filtered',
+						desc,
+						snippet: matched[0],
+						time: Date.now(),
+						propagateTaint: propagateTaint !== undefined ? propagateTaint : CONFIG.PROPAGATE_TAINT_BY_DEFAULT
+					});
+				}
+				return false;
+			}
+
+			if (!isHeader && CONFIG.HIDE_DUP_POSTS && this.state.isDuplicate(id)) {
+				this.toggleCollapsed(post, true, {
+					reason: 'duplicate-post',
+					time: Date.now(),
+					propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
+				});
+				return false;
+			}
+			if (isHeader && CONFIG.HIDE_DUP_THREADS && this.state.isDuplicate(id)) {
+				this.toggleHidden(post, true, {
+					reason: 'duplicate',
+					fullText: post.allP,
+					time: Date.now()
+				});
+				return false;
+			}
+
+			if (!isHeader) {
+				const taintResult = this.state.isTainted(id);
+				if (taintResult.tainted) {
+					this.toggleCollapsed(post, true, {
+						reason: 'tainted',
+						time: Date.now(),
+						desc: taintResult.rootId,
+						propagateTaint: true
+					});
+					return false;
+				}
+			}
+        }
+		if (this.state.isCollapsed(id)) {
+            if (this.state.getCollapsed(id)?.reason !== 'manual') {
+                this.toggleCollapsed(post, false);
+            } else {
+                return false;
+            }
+        } else if (this.state.isHidden(id)) {
+            if (this.state.getHidden(id)?.reason !== 'manual') {
+                this.toggleHidden(post, false);
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    reprocessReplies(post) {
         if (!post) return;
-        const pcst = isCollapsed || this.state.isCollapsed(post.num);
+        const pcst = this.state.isCollapsed(post.num);
         for (const cid of post.replies) {
             const key = String(cid);
             if (!this.state.isPassthrough(key) && this.state.isCollapsed(key) !== pcst) {
@@ -2949,202 +3072,18 @@ class PostProcessor {
                 const t = this.state.isTainted(key);
                 if (t.tainted) {
                     if (!this.state.getCollapsed(key)) {
-                        this.collapsePost(postC, {
+                        this.toggleCollapsed(postC, true, {
                             reason: 'tainted',
+                            time: Date.now(),
                             desc: t.rootId,
                             propagateTaint: true
                         });
                     }
                 } else if (this.state.getCollapsed(key)?.reason === 'tainted') {
-                    this.uncollapsePost(postC);
+                    this.toggleCollapsed(postC, false);
                 }
             }
         }
-    }
-
-    registerNewPost(p) { return this.processNewPost(new Post(p)); }
-
-    processNewPost(post) {
-        if (!post) return false;
-
-        const id = post.num;
-        const threadId = post.threadId;
-
-        if (!currentThreadId && this.state.isHidden(threadId)) {
-            if (id === threadId) {
-                const state = this.state.getHidden(id);
-                if (state) this.ops.queueWrite(post.thread, { classAdd: state.cls || 'tm-hidden' });
-            }
-            return false;
-        }
-
-        const el = post.el;
-        if (!el) return false;
-
-        const isMyPost = post.isMyPost;
-        if (isMyPost && !this._clickedLinks.has(id)) {
-            this._clickedLinks.add(id);
-            if (CONFIG.WHITELIST_PARTICIPATED) {
-                const postT = Post.get(threadId);
-                const st = this.state.getHidden(threadId);
-                if (!st || st.reason !== 'manual') this.toggleWhitelist(postT, true);
-            }
-            if (greyscale && !this._globalScanHandle) {
-				this._globalScanHandle = this.ops.queueJsOp('greyscale:global', () => {
-					this._globalScanHandle = null;
-					const nodes = document.querySelectorAll('.post-reply-link[data-num], a.js-post-reply-btn.post__reflink[data-num]');
-					for (let i = 0, L = nodes.length; i < L; ++i) {
-						const ln = nodes[i];
-						if (!this._clickedLinks.has(String(ln.dataset.num || ''))) continue;
-						this.ops.queueWrite(ln, { classAdd: 'tm-clicked' });
-					}
-				});
-			}
-        }
-
-        if (trunc || colorize) {
-			const outLinks = post.outLinks || [];
-			for (let i = 0, L = outLinks.length; i < L; ++i) {
-				const l = outLinks[i];
-                const rid = String(l.dataset.num || '');
-                const postR = Post.get(rid);
-                if (isMyPost) this._clickedLinks.add(rid);
-
-                if (trunc) {
-                    const n = String(postR?.postNum || rid.slice(-keep));
-                    if (!n) continue;
-                    const label = (n === '1' || rid === threadId) ? '>>OP' : `>>${n}`;
-
-                    if (postR?.isMyPost) {
-                        if (greyscale) this.ops.queueWrite(l, { text: label + ' (You)', classAdd: 'tm-clicked' });
-                        else if (colorize) this.ops.queueWriteWithKelly(l, n, { text: label + ' (You)' });
-                        else this.ops.queueWrite(l, { text: label + ' (You)' });
-                    } else if (greyscale && this._clickedLinks.has(rid)) {
-                        this.ops.queueWrite(l, { text: label, classAdd: 'tm-clicked' });
-                    } else if (colorize) {
-                        this.ops.queueWriteWithKelly(l, n, { text: label });
-                    } else {
-                        this.ops.queueWrite(l, { text: label });
-                    }
-                } else if (postR?.isMyPost) {
-                    if (greyscale) this.ops.queueWrite(l, { classAdd: 'tm-clicked' });
-                    else this.ops.queueWriteWithKelly(l, rid);
-                } else if (greyscale && this._clickedLinks.has(rid)) {
-                    this.ops.queueWrite(l, { classAdd: 'tm-clicked' });
-                } else {
-                    this.ops.queueWriteWithKelly(l, rid);
-                }
-            }
-        } else if (greyscale) {
-			const outLinks = post.outLinks || [];
-			for (let i = 0, L = outLinks.length; i < L; ++i) {
-				const l = outLinks[i];
-                const rid = String(l.dataset.num || '');
-                if (isMyPost) this._clickedLinks.add(rid);
-                if (this._clickedLinks.has(rid)) this.ops.queueWrite(l, { classAdd: 'tm-clicked' });
-            }
-        }
-
-        this.handlePostDetails[CONFIG.INSTANT_DETAILS || null](post);
-
-        if (this.state.isMediaCollapsed(id)) this.toggleMedia(post, true, this.state.getMediaCollapsed(id));
-        else if (post.isHeader ? CONFIG.AUTO_COLLAPSE_MEDIA_H : CONFIG.AUTO_COLLAPSE_MEDIA_P) this.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
-
-        if (currentThreadId === id) return false;
-
-        if (this.state.isHidden(id)) {
-            const state = this.state.getHidden(id);
-            if (state) this.ops.queueWrite(post.thread, { classAdd: state.cls || 'tm-hidden' });
-            return false;
-        }
-
-        if (this.state.isCollapsed(id)) {
-            this.applyVisualState(post, { state: 'collapsed', ...this.state.getCollapsed(id) });
-            return false;
-        }
-
-        this.processPost(post);
-        return post;
-    }
-
-    processPost(post) {
-        if (!post) return false;
-        const id = post.num;
-
-        if (currentThreadId !== id && !this.state.isWhitelisted(id)) {
-            if (this.state.isPassthrough(id)) return true;
-
-            const isHeader = post.isHeader;
-            const matchResult = post.getMatch();
-
-            if (matchResult?.matched) {
-                const { desc, matched, filter, propagateTaint } = matchResult;
-                if (isHeader) {
-                    this.hideThread(post, {
-                        reason: 'filtered',
-                        desc,
-                        filter,
-                        fullText: post.allP,
-                        time: Date.now()
-                    });
-                } else {
-                    this.collapsePost(post, {
-                        reason: 'filtered',
-                        desc,
-                        snippet: matched[0],
-                        time: Date.now(),
-                        propagateTaint: propagateTaint !== undefined ? propagateTaint : CONFIG.PROPAGATE_TAINT_BY_DEFAULT
-                    });
-                }
-                return false;
-            }
-
-            if (!isHeader) {
-                if (CONFIG.HIDE_DUP_POSTS && this.state.isDuplicate(id)) {
-                    this.collapsePost(post, {
-                        reason: 'duplicate-post',
-                        time: Date.now(),
-                        propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
-                    });
-                    return false;
-                }
-
-                const taintResult = this.state.isTainted(id);
-                if (taintResult.tainted) {
-                    this.collapsePost(post, {
-                        reason: 'tainted',
-                        desc: taintResult.rootId,
-                        propagateTaint: true
-                    });
-                    return false;
-                }
-            } else {
-                if (CONFIG.HIDE_DUP_THREADS && this.state.isDuplicate(id)) {
-                    this.hideThread(post, {
-                        reason: 'duplicate',
-                        fullText: post.allP,
-                        time: Date.now()
-                    });
-                    return false;
-                }
-            }
-        }
-
-        if (this.state.isCollapsed(id)) {
-            if (this.state.getCollapsed(id)?.reason !== 'manual') {
-                this.uncollapsePost(post);
-            } else {
-                return false;
-            }
-        } else if (this.state.isHidden(id)) {
-            if (this.state.getHidden(id)?.reason !== 'manual') {
-                this.unhideThread(post);
-            } else {
-                return false;
-            }
-        }
-
-        return true;
     }
 }
 const postProcessor = new PostProcessor(stateManager, opsManager);
@@ -3152,13 +3091,17 @@ const postProcessor = new PostProcessor(stateManager, opsManager);
 // ---------- CROSS-TAB SYNC ----------
 class CrossTabSync {
     constructor(postProcessor, stateManager, opsManager, filterEngine) {
-        this.reconcile = opsManager.createDebouncer(this._reconcile.bind(this), 100, true);
+        this.reconcile = opsManager.createDebouncer(this._reconcile, 100, true);
         this.processor = postProcessor;
         this.state = stateManager;
         this.ops = opsManager;
         this.engine = filterEngine;
         this._snapshot = null;
     }
+
+    // ---------- signatures ----------
+
+    _sig(obj) { return h32(JSON.stringify(obj ?? null)); }
 
     _stateSig(stateData) {
         const out = [];
@@ -3202,23 +3145,19 @@ class CrossTabSync {
         return h32(JSON.stringify({ t: norm(threadRules), r: norm(replyRules) }));
     }
 
-    _sig(obj) { return h32(JSON.stringify(obj ?? null)); }
+    // ---------- util ----------
 
-    _readEffectiveFilters() {
-        const scope = safeGet(RULES_SCOPE_KEY, 'global');
-        if (scope === 'board') {
-            const bd = safeGet(BOARD_DATA_KEY, {}) || {};
-            return {
-                threadRules: Array.isArray(bd.threadRules) ? bd.threadRules : [],
-                replyRules: Array.isArray(bd.replyRules) ? bd.replyRules : []
-            };
-        }
-        const gd = safeGet(GLOBAL_FILTERS_KEY, {}) || {};
-        return {
-            threadRules: Array.isArray(gd.threadRules) ? gd.threadRules : [],
-            replyRules: Array.isArray(gd.replyRules) ? gd.replyRules : []
-        };
-    }
+	_toMap(arr) {
+		const out = new Map();
+		if (!Array.isArray(arr)) return out;
+		for (const entry of arr) {
+			if (!Array.isArray(entry) || entry.length < 2) continue;
+			out.set(String(entry[0]), entry[1]);
+		}
+		return out;
+	}
+
+    _getTime(st, field) { return st?.[field]?.time || 0; }
 
     _takeSnapshot() {
         const board = safeGet(BOARD_DATA_KEY, {}) || {};
@@ -3233,6 +3172,23 @@ class CrossTabSync {
             scope: safeGet(RULES_SCOPE_KEY, 'global'),
             stateRaw,
             cfgObj
+        };
+    }
+
+    // ---------- change handlers ----------
+
+    _readEffectiveFilters() {
+        if (safeGet(RULES_SCOPE_KEY, 'global') === 'board') {
+            const bd = safeGet(BOARD_DATA_KEY, {}) || {};
+            return {
+                threadRules: Array.isArray(bd.threadRules) ? bd.threadRules : [],
+                replyRules: Array.isArray(bd.replyRules) ? bd.replyRules : []
+            };
+        }
+        const gd = safeGet(GLOBAL_FILTERS_KEY, {}) || {};
+        return {
+            threadRules: Array.isArray(gd.threadRules) ? gd.threadRules : [],
+            replyRules: Array.isArray(gd.replyRules) ? gd.replyRules : []
         };
     }
 
@@ -3305,13 +3261,14 @@ class CrossTabSync {
 
     _applyConfigChanges(prevCfg, nextCfg, reprocess = false) {
         CONFIG = { ...DEFAULT_CONFIG, ...loadConfigFromStorage(getPreferredConfigScope()) };
+
         if (prevCfg.MANAGER_BUTTON_POSITION !== nextCfg.MANAGER_BUTTON_POSITION) {
             applyManagerButtonPosition(CONFIG.MANAGER_BUTTON_POSITION);
         }
         if (prevCfg.PROPAGATE_TAINT_BY_DEFAULT !== nextCfg.PROPAGATE_TAINT_BY_DEFAULT) {
             this.state.forEach((id, st) => {
                 if (st.collapsed?.reason === 'manual') {
-                    this.processor.collapsePost(Post.get(id), {
+                    this.processor.toggleCollapsed(id, true, {
                         reason: 'manual',
                         time: st.collapsed.time || Date.now(),
                         propagateTaint: nextCfg.PROPAGATE_TAINT_BY_DEFAULT
@@ -3329,53 +3286,52 @@ class CrossTabSync {
     }
 
     _applyStateChanges(oldStateData, newStateData) {
-        const toMap = (arr) => new Map((arr || []).map(([id, st]) => [id, st]));
-        const oldMap = toMap(oldStateData);
-        const newMap = toMap(newStateData);
+        const oldMap = this._toMap(oldStateData);
+        const newMap = this._toMap(newStateData);
         const ids = new Set([...oldMap.keys(), ...newMap.keys()]);
 
         for (const id of ids) {
             const prev = oldMap.get(id);
             const next = newMap.get(id);
+
             if (this._sig(prev) === this._sig(next)) continue;
 
-            const k = Post.get(id) || id;
+            const curr = this.state._state.get(id);
 
-            const wasWL = !!prev?.whitelist;
-            const nowWL = !!next?.whitelist;
-            if (!wasWL && nowWL) this.processor.toggleWhitelist(k, true, next?.whitelist);
-            if (wasWL && !nowWL) this.processor.toggleWhitelist(k, false);
+            if (next?.whitelist && (!curr?.whitelist || this._getTime(next, 'whitelist') > this._getTime(curr, 'whitelist'))) {
+                this.state.setWhitelist(id, next.whitelist);
+                if(this.state.isHidden(id)) this.state.deleteHidden(id);
+            } else if (!next?.whitelist && curr?.whitelist && prev?.whitelist) {
+                this.state.deleteWhitelist(id);
+            }
 
-            if (currentThreadId !== id) {
-                const wasHidden = !!prev?.hidden;
-                const nowHidden = !!next?.hidden;
-                if (!wasHidden && nowHidden && next?.hidden?.reason === 'manual' || !next?.hidden?.reason) {
-                    this.processor.hideThread(k, next?.hidden);
-                } else if (wasHidden && !nowHidden && (prev?.hidden?.reason === 'manual' || !prev?.hidden?.reason)) {
-                    this.processor.unhideThread(k);
+            if (next?.hidden && next.hidden.reason === 'manual') {
+                if (!curr?.hidden || this._getTime(next, 'hidden') > this._getTime(curr, 'hidden')) {
+                    this.state.setHidden(id, next.hidden);
                 }
+            } else if (!next?.hidden && curr?.hidden && prev?.hidden && prev.hidden.reason === 'manual') {
+                this.state.deleteHidden(id);
             }
 
-            const wasCol = !!prev?.collapsed;
-            const nowCol = !!next?.collapsed;
-            if (!wasCol && nowCol && next?.collapsed?.reason === 'manual' || !next?.collapsed?.reason) {
-                this.processor.collapsePost(k, next?.collapsed);
-            } else if (wasCol && !nowCol && prev?.collapsed?.reason === 'manual' || !prev?.collapsed?.reason) {
-                if (prev.collapsed?.reason !== 'manual') this.state.setPassthrough(id);
-                this.processor.uncollapsePost(k);
+            if (next?.collapsed && next.collapsed.reason === 'manual') {
+                if (!curr?.collapsed || this._getTime(next, 'collapsed') > this._getTime(curr, 'collapsed')) {
+                    this.state.setCollapsed(id, next.collapsed);
+                }
+            } else if (!next?.collapsed && curr?.collapsed && prev?.collapsed && prev.collapsed.reason === 'manual') {
+                this.state.deleteCollapsed(id);
             }
 
-            const wasMC = !!prev?.mediaCollapsed;
-            const nowMC = !!next?.mediaCollapsed;
-            if (!wasMC && nowMC && next?.mediaCollapsed?.reason === 'manual') {
-                this.processor.toggleMedia(k, true, next?.mediaCollapsed);
-            } else if (wasMC && !nowMC && prev?.mediaCollapsed?.reason === 'manual') {
-                this.processor.toggleMedia(k, false);
+            if (next?.mediaCollapsed && next.mediaCollapsed.reason === 'manual') {
+                if (!curr?.mediaCollapsed || this._getTime(next, 'mediaCollapsed') > this._getTime(curr, 'mediaCollapsed')) {
+                    this.state.setMediaCollapsed(id, next.mediaCollapsed);
+                }
+            } else if (!next?.mediaCollapsed && curr?.mediaCollapsed && prev?.mediaCollapsed && prev.mediaCollapsed.reason === 'manual') {
+                this.state.deleteMediaCollapsed(id);
             }
         }
     }
 
-    _reconcile() {
+    _reconcile = () => {
         if (!this._snapshot) return;
 
         const current = this._takeSnapshot();
@@ -3385,12 +3341,17 @@ class CrossTabSync {
             scope: this._snapshot.scope !== current.scope,
             config: this._snapshot.configSig !== current.configSig
         };
+        if (!sigs.state && !sigs.filters && !sigs.scope && !sigs.config) return;
+
+        if (sigs.scope || sigs.filters) this.engine.compileActiveFilters();
 
         if (sigs.config) this._applyConfigChanges(this._snapshot.cfgObj, current.cfgObj, sigs.scope || sigs.filters);
         else if (sigs.scope || sigs.filters) this._applyFilterChanges();
         if (sigs.state) this._applyStateChanges(this._snapshot.stateRaw, current.stateRaw);
 
         this._snapshot = current;
+
+        this.state.emit('sync:reconciled', { sigs });
     }
 
     initialize() {
@@ -3398,10 +3359,9 @@ class CrossTabSync {
             if (document.visibilityState === 'hidden') {
                 this._snapshot = this._takeSnapshot();
             } else if (document.visibilityState === 'visible') {
-                this.reconcile();
+                this._reconcile();
             }
         });
-
         globalThis.addEventListener('storage', (e) => {
             if (!e?.key) return;
             if ([
@@ -3581,10 +3541,6 @@ class Post {
         return { matched: false };
     }
 }
-
-const scheduleSave = opsManager.createDebouncer(() => {
-    safeSet(BOARD_DATA_KEY, stateManager.serializeForStorage());
-}, CONFIG.SAVE_DEBOUNCE, true);
 
 
 // ---------- UI MANAGEMENT ----------
@@ -4271,16 +4227,15 @@ const openModal = (() => {
 		});
 		addDocListener('keydown', (e) => { if (e.key === 'Escape') closeAllDropdowns(); });
 
-		addDocListener('visibilitychange', () => {
-			if (!document.hidden && document.getElementById('tm-management-overlay')) {
-				const timer = setTimeout(() => {
-					activeTimers.delete(timer);
-					updateAllCounters();
-					renderList();
-					renderRulesList();
-				}, 0);
-				activeTimers.add(timer);
-			}
+		stateManager.on('sync:reconciled', (sigs) => {
+			if (document.visibilityState !== 'visible' || !document.getElementById('tm-management-overlay')) return;
+			const timer = setTimeout(() => {
+				activeTimers.delete(timer);
+				updateAllCounters();
+				renderList();
+				renderRulesList();
+			}, 0);
+			activeTimers.add(timer)
 		});
 
 		/* ================== STORAGE HELPERS ================== */
@@ -4302,7 +4257,7 @@ const openModal = (() => {
 
 		/* ================== EXPORT / IMPORT / RESET ================== */
 		const buildExportPayload = ({ scope, what }) => {
-			const payload = { version: '1.0', exportDate: new Date().toISOString(), scope };
+			const payload = { version: '1.1', exportDate: new Date().toISOString(), scope };
 			if (what === 'rules' || what === 'both') {
 				const { threadRules, replyRules } = readRulesForScope(scope);
 				payload.threadRules = threadRules;
@@ -4379,7 +4334,7 @@ const openModal = (() => {
                         renderRulesList();
                         renderConfig();
 					} catch (e) {
-						console.error('[abufilter] Import failed:', { source: 'doImport', error: e.message });
+						console.error('[abufilter] Import failed:', { source: 'doImport', error: e, stack: e?.stack });
 						notify.error('Ошибка импорта: ' + (e?.message || String(e)));
 					}
 				};
@@ -4744,8 +4699,8 @@ const openModal = (() => {
 
 			if (e.target.matches('.tm-ops-btn.tm-ops-remove')) {
 				const id = row.dataset.id;
-				if (stateManager.isWhitelisted(id)) postProcessor.toggleWhitelist(Post.get(id) || id, false);
-				else postProcessor.toggleWhitelist(Post.get(id) || id, true);
+				if (stateManager.isWhitelisted(id)) postProcessor.toggleWhitelist(id, false);
+				else postProcessor.toggleWhitelist(id, true);
 				updateAllCounters();
 				renderList();
 				return;
@@ -4765,8 +4720,8 @@ const openModal = (() => {
 				e.preventDefault();
 				const row = e.target.closest('.tm-ops-row'); if (!row) return;
 				const id = row.dataset.id;
-				if (stateManager.isWhitelisted(id)) postProcessor.toggleWhitelist(Post.get(id) || id, false);
-				else postProcessor.toggleWhitelist(Post.get(id) || id, true);
+				if (stateManager.isWhitelisted(id)) postProcessor.toggleWhitelist(id, false);
+				else postProcessor.toggleWhitelist(id, true);
 				updateAllCounters();
 				renderList();
 				return;
@@ -5288,7 +5243,7 @@ const openModal = (() => {
 					`;
 				}
 			} catch (e) {
-				console.error('[abufilter] Regex compile failed:', { source: 'testSingleRule', error: e.message });
+				console.error('[abufilter] Regex compile failed:', { source: 'testSingleRule', error: e, stack: e?.stack });
 				resultDiv.innerHTML = `<div class="tm-test-error"><strong>Ошибка:</strong> ${escapeHtml(e.message)}</div>`;
 			}
 		};
@@ -5313,7 +5268,7 @@ const openModal = (() => {
 
 					if (match) matches.push({ rule, index: i, match, normalized, preservePunct });
 				} catch (e) {
-					errors.push({ rule, index: i, error: e.message });
+					errors.push({ rule, index: i, error: e, stack: e?.stack });
 				}
 			}
 
@@ -5659,7 +5614,7 @@ const openModal = (() => {
 				resetRuleForm();
 				reprocessAffectedPosts();
 			} catch (e) {
-				console.error('[abufilter] Failed to compile regex:', { source: 'addRule', error: e.message });
+				console.error('[abufilter] Failed to compile regex:', { source: '#tm-rule-add click handler', error: e, stack: e?.stack });
 				notify.error('Неверный паттерн: ' + e.message);
 			}
 		});
@@ -5694,7 +5649,7 @@ const openModal = (() => {
 				resetRuleForm();
 				reprocessAffectedPosts();
 			} catch (e) {
-				console.error('[abufilter] Failed to compile regex:', { source: 'updateRule', error: e.message });
+				console.error('[abufilter] Failed to compile regex:', { source: '#tm-rule-update click handler', error: e, stack: e?.stack });
 				notify.error('Неверный паттерн: ' + e.message);
 			}
 		});
@@ -5869,7 +5824,7 @@ const openModal = (() => {
 						idsToTouch.add(id);
 					}
 					if (mediaThread && st.mediaCollapsed) {
-						postProcessor.toggleMedia(Post.get(id), false);
+						postProcessor.toggleMedia(id, false);
 						idsToTouch.add(id);
 					}
 				}
@@ -5883,11 +5838,11 @@ const openModal = (() => {
 					idsToTouch.add(id);
 				}
 				if (mediaBoard && st.mediaCollapsed) {
-					postProcessor.toggleMedia(Post.get(id), false);
+					postProcessor.toggleMedia(id, false);
 					idsToTouch.add(id);
 				}
 				if (whitelistBoard && st.whitelist) {
-					postProcessor.toggleWhitelist(Post.get(id), false);
+					postProcessor.toggleWhitelist(id, false);
 					idsToTouch.add(id);
 				}
 			});
@@ -5901,7 +5856,7 @@ const openModal = (() => {
 
 			for (const id of Array.from(idsToReprocess)) postProcessor.processPost(Post.get(id));
 
-			scheduleSave();
+			opsManager.scheduleSave();
 			updateAllCounters();
 			notify.success('Данные очищены');
 		});
@@ -6125,12 +6080,14 @@ const main = () => {
     container.innerHTML = `<button class="${((hasTouch && narrowScreen) || mobileUA) ? 'button_mob' : 'tm-button'}" id="tm-management-btn" type="button">☰</button>`;
 
     let el = document.getElementById(TM_STYLE_ID);
-    el = document.createElement('style');
-    el.id = TM_STYLE_ID;
-    el.type = 'text/css';
-    el.textContent = TM_STYLE;
-    for (let i = 0; i < KELLY_LEN; i++) el.textContent += `.kelly-${i}{color:${KELLY_COLORS[i]}}`;
-    document.head.appendChild(el);
+	if (!el) {
+		el = document.createElement('style');
+		el.id = TM_STYLE_ID;
+		el.type = 'text/css';
+		el.textContent = TM_STYLE;
+		for (let i = 0; i < KELLY_LEN; i++) el.textContent += `.kelly-${i}{color:${KELLY_COLORS[i]}}`;
+		document.head.appendChild(el);
+	}
 
     document.documentElement.classList.toggle('tm-fade-collapsed-on', CONFIG.FADE_COLLAPSED_POSTS);
     document.documentElement.classList.toggle('tm-details-on', CONFIG.DETAILS_REFORMAT);
@@ -6144,8 +6101,8 @@ const main = () => {
     postProcessor.initialize();
     crossTabSync.initialize();
 
-    globalThis.addEventListener('beforeunload', () => scheduleSave.flush());
-    globalThis.addEventListener('pagehide', () => scheduleSave.flush());
+    globalThis.addEventListener('beforeunload', () => opsManager.scheduleSave.flush());
+    globalThis.addEventListener('pagehide', () => opsManager.scheduleSave.flush());
 
     // makaba
     const cl = postProcessor._clickedLinks;
@@ -6175,7 +6132,7 @@ const main = () => {
                     }
                 }
             } catch (e) {
-                console.error('[abufilter] Failed to fetch posts:', { source: 'fetchPosts', error: e.message });
+                console.error('[abufilter] Failed to fetch posts:', { source: 'proto.fetchPosts', error: e, stack: e?.stack });
             }
             return ret;
         };
@@ -6198,13 +6155,13 @@ const main = () => {
 		if (!post) return origHide.call(this, store, reason);
 
         if (post.isHeader) {
-            postProcessor.hideThread(post, {
+            postProcessor.toggleHidden(post, true, {
                 reason: 'manual',
                 fullText: post.allP,
                 time: Date.now()
             });
         } else {
-            postProcessor.collapsePost(post, {
+            postProcessor.toggleCollapsed(post, true, {
                 reason: 'manual',
                 time: Date.now(),
                 propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
@@ -6218,22 +6175,22 @@ const main = () => {
 		const post = Post.get(this.num);
 		if (!post) return origUnhide.call(this);
 
-        if (post.isHeader) postProcessor.unhideThread(post);
-        else postProcessor.uncollapsePost(post);
+        if (post.isHeader) postProcessor.toggleHidden(post, false);
+        else postProcessor.toggleCollapsed(post, false);
 
         return origUnhide.call(this);
     };
 
     const origFavAdd = unsafeWindow.Favorites.add;
     unsafeWindow.Favorites.add = function(num) {
-        if (stateManager.isWhitelisted(String(num))) postProcessor.toggleWhitelist(Post.get(num) || num, false);
+        if (stateManager.isWhitelisted(String(num))) postProcessor.toggleWhitelist(num, false);
 		else postProcessor.toggleWhitelist(Post.get(num) || num, true);
         return origFavAdd.call(this, num);
     };
 
     const origFavRemove = unsafeWindow.Favorites.remove;
     unsafeWindow.Favorites.remove = function(num) {
-        if (stateManager.isWhitelisted(String(num))) postProcessor.toggleWhitelist(Post.get(num) || num, false);
+        if (stateManager.isWhitelisted(String(num))) postProcessor.toggleWhitelist(num, false);
         return origFavRemove.call(this, num);
     };
 
@@ -6312,7 +6269,7 @@ if (typeof unsafeWindow.Post !== 'undefined') {
     if (!sample) { console.warn('[abufilter] Makaba Post() factory returned nothing'); return; }
     proto = Object.getPrototypeOf(sample);
     try { mPosts = sample.getPostsObj(); }
-    catch (e) { console.error('[abufilter] Failed to grab posts obj:', { source: 'unsafeWindow.Post lookup', error: e.message }); return; }
+    catch (e) { console.error('[abufilter] Failed to grab posts obj:', { source: 'unsafeWindow.Post', error: e, stack: e?.stack }); return; }
     main();
 } else {
 	let postValue;
@@ -6331,7 +6288,7 @@ if (typeof unsafeWindow.Post !== 'undefined') {
             if (!sample) { console.warn('[abufilter] Makaba Post() factory returned nothing'); return; }
             proto = Object.getPrototypeOf(sample);
             try { mPosts = sample.getPostsObj(); }
-            catch (e) { console.error('[abufilter] Failed to grab posts obj:', { source: 'unsafeWindow.Post lookup', error: e.message }); return; }
+            catch (e) { console.error('[abufilter] Failed to grab posts obj:', { source: 'unsafeWindow.Post', error: e, stack: e?.stack }); return; }
             main();
 		},
 		get() {
