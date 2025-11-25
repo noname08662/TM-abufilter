@@ -4227,7 +4227,7 @@ const openModal = (() => {
 		});
 		addDocListener('keydown', (e) => { if (e.key === 'Escape') closeAllDropdowns(); });
 
-		stateManager.on('sync:reconciled', (sigs) => {
+		stateManager.on('sync:reconciled', () => {
 			if (document.visibilityState !== 'visible' || !document.getElementById('tm-management-overlay')) return;
 			const timer = setTimeout(() => {
 				activeTimers.delete(timer);
@@ -6299,3 +6299,4 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
