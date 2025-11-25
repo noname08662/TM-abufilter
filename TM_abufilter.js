@@ -2416,8 +2416,8 @@ class PostProcessor {
             details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
             this._fmt(details, post); this._rt(details);
         },
-        [null]: (post) => { this._controlsIO.observe(post.el); },
-        [false]: (post) => { this._controlsIO.observe(post.el); }
+        [null]: (post) => { if (post.el) this._controlsIO.observe(post.el); },
+        [false]: (post) => { if (post.el) this._controlsIO.observe(post.el); }
     }
 
     _controlsIO = new IntersectionObserver(entries => {
@@ -2611,7 +2611,7 @@ class PostProcessor {
             }
             return null;
         };
-		
+
 		const pad2 = (n) => (n < 10 ? '0' + n : '' + n);
 
         const formatAbsolute = (d) => {
@@ -2917,7 +2917,7 @@ class PostProcessor {
     registerNewPost(p) { return this.processNewPost(new Post(p)); }
 
     processNewPost(post) {
-        if (!post?.el) return false;
+        if (!post) return false;
 
         const id = post.num;
         const threadId = post.threadId;
@@ -6299,4 +6299,3 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
-
