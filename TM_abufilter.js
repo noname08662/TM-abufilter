@@ -2452,7 +2452,7 @@ class PostProcessor {
     _fmt() {
         if (!CONFIG.DETAILS_REFORMAT) {
             if (trunc || colorize) {
-                return (details, post) => {
+                return (_details, post) => {
                     const refl = post.refl;
                     if (!refl) return;
 
@@ -2474,7 +2474,7 @@ class PostProcessor {
                     else if (colorize) this.ops.queueWriteWithKelly(refl, text);
                 };
             } else if (greyscale) {
-                return (details, post) => {
+                return (_details, post) => {
                     const refl = post.refl;
                     if (!refl) return;
                     if (this.state.isSeen(post.num)) this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
