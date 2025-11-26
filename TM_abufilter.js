@@ -211,7 +211,7 @@ const CONFIG_DEFINITIONS = {
 		{ key: 'MAX_CHARS_IN_LIST', label: 'Символов текста ОП-поста во вкладке "Треды"', type: 'number', min: 20, max: 600, default: 500, desc: 'Макс. кол-во отображаемых символов из текста треда' },
 		{ key: 'INSTANT_DETAILS', label: 'Мгновенно обрабатывать полосу деталей постов (время, номер, и т.д.)', type: 'checkbox', default: false, desc: 'На случай, если дефолтная (асинхронная) обработка создает видимое мигание' },
 		{ key: 'MAX_SNIPPET_LENGTH', label: 'Лимит символов фрагмента совпадения', type: 'number', min: 4, max: 40, default: 15, desc: 'Макс. кол-во отображаемых символов во фрагментах (совпадений) постов', needsReload: true },
-		{ key: 'PREVIEW_GREYSCALE_DELAY', label: 'Задержка затенения при взаимодействии с превью', type: 'number', min: 1000, max: 8000, default: 3000, desc: 'Временной интервал (мс) перед началом обработки ссылок', needsReload: true },
+		{ key: 'PREVIEW_GREYSCALE_DELAY', label: 'Задержка затенения при взаимодействии с превью', type: 'number', min: 1000, max: 8000, default: 3000, desc: 'Временной интервал (мс) перед началом обработки ссылок' },
 	]
 };
 
@@ -6403,3 +6403,4 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
