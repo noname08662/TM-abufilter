@@ -2,7 +2,7 @@
 // @name         TM abufilter
 // @description  Автоскрытие тредов и постов, относительное время, цветные рефки, и еще немного мелочи. GUI управление.
 // @namespace    obezyana_na_palke
-// @version      1.1
+// @version      1.1.1
 // @author       @noname08662
 // @match        *://2ch.su/*
 // @match        *://2ch.life/*
@@ -211,6 +211,7 @@ const CONFIG_DEFINITIONS = {
 		{ key: 'MAX_CHARS_IN_LIST', label: 'Символов текста ОП-поста во вкладке "Треды"', type: 'number', min: 20, max: 600, default: 500, desc: 'Макс. кол-во отображаемых символов из текста треда' },
 		{ key: 'INSTANT_DETAILS', label: 'Мгновенно обрабатывать полосу деталей постов (время, номер, и т.д.)', type: 'checkbox', default: false, desc: 'На случай, если дефолтная (асинхронная) обработка создает видимое мигание' },
 		{ key: 'MAX_SNIPPET_LENGTH', label: 'Лимит символов фрагмента совпадения', type: 'number', min: 4, max: 40, default: 15, desc: 'Макс. кол-во отображаемых символов во фрагментах (совпадений) постов', needsReload: true },
+		{ key: 'PREVIEW_GREYSCALE_DELAY', label: 'Задержка затенения при взаимодействии с превью', type: 'number', min: 1000, max: 8000, default: 3000, desc: 'Временной интервал (мс) перед началом обработки ссылок', needsReload: true },
 	]
 };
 
@@ -2028,7 +2029,8 @@ class StateManager extends Emitter {
         COLLAPSED:       1 << 1,
         WHITELIST:       1 << 2,
         MEDIA_COLLAPSED: 1 << 3,
-        PASSTHROUGH:     1 << 4
+        PASSTHROUGH:     1 << 4,
+		SEEN:			 1 << 5
     };
 
     constructor(opsManager) {
@@ -2140,6 +2142,10 @@ class StateManager extends Emitter {
     deletePassthrough(id) { this._updateState(id, this.STATE_FLAGS.PASSTHROUGH, 'passthrough', null, false); }
     isPassthrough(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.PASSTHROUGH) !== 0; }
 
+    setSeen(id, payload = {}) { this._updateState(id, this.STATE_FLAGS.SEEN, 'seen', payload, true); }
+    deleteSeen(id) { this._updateState(id, this.STATE_FLAGS.SEEN, 'seen', null, false); }
+    isSeen(id) { const st = this._state.get(id); return st && (st.flags & this.STATE_FLAGS.SEEN) !== 0; }
+
 	deleteAll(id) {
 		if (this._state.has(id)) {
 			this._state.delete(id);
@@ -2227,7 +2233,7 @@ class StateManager extends Emitter {
         return false;
     }
 
-    // ---------- Storage ----------
+    // ---------- storage ----------
 
     loadState() {
         CONFIG = { ...DEFAULT_CONFIG, ...loadConfigFromStorage(getPreferredConfigScope()) };
@@ -2314,7 +2320,6 @@ class PostProcessor {
     constructor(stateManager, opsManager) {
         this.state = stateManager;
         this.ops = opsManager;
-        this._clickedLinks = new Set();
         this._bound = false;
 
         this.state.on('state:change', this.handleStateChange);
@@ -2330,7 +2335,7 @@ class PostProcessor {
         this._fmt = this._fmt();
         this._rt = this._rt();
 
-        document.body.addEventListener('click', (e) => {
+        document.getElementById('js-posts').addEventListener('click', (e) => {
             const collapseBtn = e.target.closest('.tm-collapse-btn');
             if (collapseBtn) {
                 const postEl = collapseBtn.closest('.post[data-num]');
@@ -2382,7 +2387,7 @@ class PostProcessor {
         }, { capture: true });
 
         if (greyscale) {
-            document.body.addEventListener('pointerdown', (e) => {
+            document.getElementById('js-posts').addEventListener('pointerdown', (e) => {
                 const link = e.target.closest('a.js-post-reply-btn.post__reflink, .post-reply-link');
                 if (!link) return;
 
@@ -2392,17 +2397,8 @@ class PostProcessor {
                 const pid = String(link.closest('.post[data-num]')?.dataset.num || '');
                 if (!pid) return;
 
-                if (!this._clickedLinks.has(id)) {
-                    this._clickedLinks.add(id);
-
-                    const nodeList = document.querySelectorAll(
-                        `.post-reply-link[data-num="${pid}"], .post-reply-link[data-num="${id}"],` +
-                        `a.js-post-reply-btn.post__reflink[data-num="${pid}"], a.js-post-reply-btn.post__reflink[data-num="${id}"]`
-                    );
-                    for (let i = 0, L = nodeList.length; i < L; ++i) {
-                        this.ops.queueWrite(nodeList[i], { classAdd: 'tm-clicked' });
-                    }
-                }
+				if (!this.state.isSeen(id)) this.toggleSeen(id, true);
+				if (!this.state.isSeen(pid)) this.toggleSeen(pid, true);
             }, { passive: true });
         }
     }
@@ -2457,7 +2453,7 @@ class PostProcessor {
         if (!CONFIG.DETAILS_REFORMAT) {
             if (trunc || colorize) {
                 return (details, post) => {
-                    const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+                    const refl = post.refl;
                     if (!refl) return;
 
                     let tn = refl.firstChild;
@@ -2474,14 +2470,14 @@ class PostProcessor {
                             refl.dataset._lastTxt = text;
                         });
                     }
-                    if (greyscale && this._clickedLinks.has(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
+                    if (greyscale && this.state.isSeen(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
                     else if (colorize) this.ops.queueWriteWithKelly(refl, text);
                 };
             } else if (greyscale) {
                 return (details, post) => {
-                    const refl = details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+                    const refl = post.refl;
                     if (!refl) return;
-                    if (this._clickedLinks.has(post.num)) this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
+                    if (this.state.isSeen(post.num)) this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
                 }
             }
             return () => {};
@@ -2502,14 +2498,14 @@ class PostProcessor {
             return null;
         };
 
-        const init = (details) => {
+        const init = (details, post) => {
             if (!details) return {};
             if (DETAILS_INIT.has(details)) return PARTS.get(details);
 
             const num = details.querySelector('.post__number');
             const mail = details.querySelector('.post__email');
             const anon = details.querySelector('.post__anon');
-            const refl = details.querySelector('a.js-post-reply-btn.post__reflink[data-num]');
+            const refl = post.refl;
 
             topPart(details, num )?.classList.add('post__detailpart--num');
             topPart(details, refl)?.classList.add('post__detailpart--refl');
@@ -2566,7 +2562,7 @@ class PostProcessor {
 
         if (trunc || colorize) {
             return (details, post) => {
-                const { num, refl } = init(details);
+                const { num, refl } = init(details, post);
                 if (refl) {
                     const id = post.num;
                     const text = num?.textContent || id.slice(-keep);
@@ -2577,7 +2573,7 @@ class PostProcessor {
                             refl.dataset._lastTxt = text;
                         });
                     }
-                    if (greyscale && this._clickedLinks.has(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
+                    if (greyscale && this.state.isSeen(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
                     else if (colorize) this.ops.queueWriteWithKelly(refl, trunc ? text : id);
                 }
             };
@@ -2732,6 +2728,9 @@ class PostProcessor {
             case 'mediaCollapsed':
                 this.handleMedia(post, !!next);
                 break;
+            case 'seen':
+                this.handleSeen(post, !!next);
+                break;
         }
     };
 
@@ -2757,7 +2756,7 @@ class PostProcessor {
 			const post = typeof postOrId === 'object' ? postOrId : Post.get(id);
 			if (post && post.threadPosts) {
 				for (const pid of post.threadPosts) {
-					this.processPost(Post.get(pid));
+					this.processNewPost(Post.get(pid));
 				}
 			}
 		}
@@ -2793,6 +2792,12 @@ class PostProcessor {
         const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
         if (on) this.state.setMediaCollapsed(id, state);
         else this.state.deleteMediaCollapsed(id);
+    }
+
+    toggleSeen(postOrId, on) {
+        const id = typeof postOrId === 'object' ? postOrId.num : String(postOrId);
+        if (on) this.state.setSeen(id, { time: Date.now() });
+        else this.state.deleteSeen(id);
     }
 
     // ---------- visual ----------
@@ -2851,6 +2856,42 @@ class PostProcessor {
         }
     }
 
+	handleSeen(post, on) {
+		if (!greyscale || !post) return;
+		const id = post.num;
+
+		const refl = post.refl;
+		if (refl) this.ops.queueWrite(refl, on ? { classAdd: 'tm-clicked' } : { classRemove: 'tm-clicked' });
+
+		for (const pid of post.repliesTo) {
+			const postR = Post.get(String(pid));
+			if (!postR) continue;
+			const inLinks = postR.refmap?.querySelectorAll('.post-reply-link') || [];
+			for (let i = 0; i < inLinks.length; ++i) {
+				const l = inLinks[i];
+				if (String(l.dataset.num || '') === id) {
+					this.ops.queueWrite(l, on ? { classAdd: 'tm-clicked' } : { classRemove: 'tm-clicked' });
+				}
+			}
+		}
+		for (const cid of post.replies) {
+            const k = String(cid);
+			const postR = Post.get(k);
+			if (!postR) continue;
+			const outLinks = postR.outLinks || [];
+			for (let i = 0; i < outLinks.length; ++i) {
+				const l = outLinks[i];
+				if (String(l.dataset.num || '') === id) {
+					this.ops.queueWrite(l, on ? { classAdd: 'tm-clicked' } : { classRemove: 'tm-clicked' });
+				}
+			}
+            const st = this.state.getCollapsed(k);
+            if (st && st.reason === 'tainted' && st.desc === id) {
+                this.ops.queueWrite(postR.el?.querySelector('.tm-snippet-part a.post-reply-link'), on ? { classAdd: 'tm-clicked' } : { classRemove: 'tm-clicked' });
+            }
+		}
+	}
+
     handleMatchSnippet(post) {
 		if (!post) return;
 
@@ -2883,7 +2924,7 @@ class PostProcessor {
                 classRemove: 'tm-element-hidden'
             };
 
-            if (greyscale && this._clickedLinks.has(text)) {
+            if (greyscale && this.state.isSeen(text)) {
                 this.ops.queueWrite(link, { ...baseConfig, classAdd: 'tm-clicked' });
             } else if (colorize) {
                 this.ops.queueWriteWithKelly(link, n, baseConfig);
@@ -2901,17 +2942,6 @@ class PostProcessor {
         }
     }
 
-    handleLink(l, id, label, isYou) {
-        const txt = label + (isYou ? ' (You)' : '');
-        if (greyscale && this._clickedLinks.has(id)) {
-            this.ops.queueWrite(l, { text: txt, classAdd: 'tm-clicked' });
-        } else if (colorize) {
-            this.ops.queueWriteWithKelly(l, id, { text: txt });
-        } else {
-            this.ops.queueWrite(l, { text: txt });
-        }
-    }
-
     // ---------- processors ----------
 
     registerNewPost(p) { return this.processNewPost(new Post(p)); }
@@ -2922,28 +2952,25 @@ class PostProcessor {
         const id = post.num;
         const threadId = post.threadId;
 
-        if (this.state.isHidden(id)) this.handleHidden(post, true);
-		if (this.state.isCollapsed(id)) this.handleCollapsed(post, true);
-        if (this.state.isMediaCollapsed(id)) this.handleMedia(post, true);
+        if (!currentThreadId && this.state.isHidden(threadId)) {
+            if (id === threadId) this.handleHidden(post, true);
+            return false;
+        }
 
-        const isMyPost = post.isMyPost;
-        if (isMyPost && !this._clickedLinks.has(id)) {
-            this._clickedLinks.add(id);
+		if (this.state.isCollapsed(id)) this.handleCollapsed(post, true);
+        if (this.state.isMediaCollapsed(id)) {
+			this.handleMedia(post, true);
+		} else if (post.isHeader ? CONFIG.AUTO_COLLAPSE_MEDIA_H : CONFIG.AUTO_COLLAPSE_MEDIA_P) {
+			this.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
+		}
+
+		const isMyPost = post.isMyPost;
+        if (isMyPost && !this.state.isSeen(id)) {
+            this.toggleSeen(id, true);
+
             if (CONFIG.WHITELIST_PARTICIPATED) {
                 const st = this.state.getHidden(threadId);
                 if (!st || st.reason !== 'manual') this.toggleWhitelist(threadId, true);
-            }
-            if (greyscale && !this._globalScanHandle) {
-                this._globalScanHandle = this.ops.queueJsOp('greyscale:global', () => {
-                    this._globalScanHandle = null;
-                    const nodes = document.querySelectorAll('.post-reply-link[data-num], a.js-post-reply-btn.post__reflink[data-num]');
-                    for (let i = 0, L = nodes.length; i < L; ++i) {
-                        const ln = nodes[i];
-                        if (this._clickedLinks.has(String(ln.dataset.num || ''))) {
-                            this.ops.queueWrite(ln, { classAdd: 'tm-clicked' });
-                        }
-                    }
-                });
             }
         }
 
@@ -2954,30 +2981,26 @@ class PostProcessor {
                 const rid = String(l.dataset.num || '');
                 const postR = Post.get(rid);
 
-                if (isMyPost) this._clickedLinks.add(rid);
+                if (isMyPost) this.toggleSeen(rid, true);
                 if (trunc) {
-                    this.handleLink(l, rid, (rid === threadId) ? '>>OP' : `>>${String(postR?.postNum || rid.slice(-keep))}`, postR?.isMyPost);
-                } else if (postR?.isMyPost || (greyscale && this._clickedLinks.has(rid))) {
-                    this.handleLink(l, rid, `>>${rid}`, postR?.isMyPost);
+                    const txt = (rid === threadId) ? '>>OP' : `>>${String(postR?.postNum || rid.slice(-keep))}` + (postR?.isMyPost ? ' (You)' : '');
+			        if (greyscale && this.state.isSeen(rid)) {
+			            this.ops.queueWrite(l, { text: txt, classAdd: 'tm-clicked' });
+			        } else if (colorize) {
+			            this.ops.queueWriteWithKelly(l, postR?.postNum || rid, { text: txt });
+			        } else {
+			            this.ops.queueWrite(l, { text: txt });
+			        }
+                } else if (greyscale && this.state.isSeen(rid)) {
+                    this.ops.queueWrite(l, { text: `>>${rid}` + (postR?.isMyPost ? ' (You)' : ''), classAdd: 'tm-clicked' });
                 } else if (colorize) {
-                    this.ops.queueWriteWithKelly(l, rid);
+                    this.ops.queueWriteWithKelly(l, postR?.postNum || rid);
                 }
             }
         }
-
         this.handlePostDetails[CONFIG.INSTANT_DETAILS || null]?.(post);
 
-        if (!this.state.isMediaCollapsed(id)) {
-            if (post.isHeader ? CONFIG.AUTO_COLLAPSE_MEDIA_H : CONFIG.AUTO_COLLAPSE_MEDIA_P) {
-                this.toggleMedia(post, true, { reason: 'auto', time: Date.now() });
-            }
-        }
-
-        if (this.state.isHidden(id)) return false;
-        if (this.state.isCollapsed(id)) return false;
-
-        this.processPost(post);
-        return post;
+        return (this.state.isCollapsed(id) ? false : this.processPost(post));
     }
 
     processPost(post) {
@@ -3104,48 +3127,80 @@ class CrossTabSync {
     _sig(obj) { return h32(JSON.stringify(obj ?? null)); }
 
     _stateSig(stateData) {
-        const out = [];
-        const a = Array.isArray(stateData) ? stateData : [];
-        for (let i = 0; i < a.length; i++) {
-            const e = a[i];
+        if (!Array.isArray(stateData)) return h32('[]');
+
+        const entries = [];
+        for (let i = 0; i < stateData.length; i++) {
+            const e = stateData[i];
             if (!e || e.length !== 2 || e[0] === null) continue;
+
             const id = String(e[0]);
             const st = e[1] || {};
-            const o = { f: st.flags >>> 0 };
-            if (st.whitelist) o.w = { id: String(st.whitelist.id ?? id) };
-            if (st.hidden) o.h = { r: st.hidden.reason || '', p: !!st.hidden.propagateTaint };
-            if (st.collapsed) o.c = { r: st.collapsed.reason || '', p: !!st.collapsed.propagateTaint };
-            if (st.mediaCollapsed) o.m = { id: String(st.mediaCollapsed.id ?? id), r: st.mediaCollapsed.reason || '' };
-            out.push([id, o]);
+
+            let parts = `f=${st.flags >>> 0}`;
+
+            if (st.whitelist) parts += `|w=${this._enc(st.whitelist.id ?? id)}`;
+            if (st.hidden) parts += `|h=${this._enc(st.hidden.reason)}|${st.hidden.propagateTaint ? '1' : '0'}`;
+            if (st.collapsed) parts += `|c=${this._enc(st.collapsed.reason)}|${st.collapsed.propagateTaint ? '1' : '0'}`;
+            if (st.mediaCollapsed) parts += `|m=${this._enc(st.mediaCollapsed.id ?? id)}|${this._enc(st.mediaCollapsed.reason)}`;
+
+            entries.push([id, parts]);
         }
-        out.sort((x, y) => x[0].localeCompare(y[0]));
-        return h32(JSON.stringify(out));
+        entries.sort(this._binSort);
+
+        let s = '';
+        for (let i = 0; i < entries.length; ++i) {
+            s += this._enc(entries[i][0]) + '|' + entries[i][1];
+        }
+        return h32(s);
     }
 
     _rulesSig(threadRules, replyRules) {
-        const norm = (rules) => {
-            const arr = [];
-            const r = Array.isArray(rules) ? rules : [];
-            for (let i = 0; i < r.length; i++) {
-                const x = r[i];
+        const processRules = (rules) => {
+            if (!Array.isArray(rules)) return [];
+
+            const temp = [];
+            for (let i = 0; i < rules.length; i++) {
+                const x = rules[i];
                 if (!x || x.disabled) continue;
-                arr.push({
-                    p: String(x.pattern || ''),
-                    f: String(x.flags || ''),
-                    d: String(x.desc || ''),
-                    m: x.flagMask >>> 0,
-                    pp: !!x.preservePunct,
-                    ec: !!x.expandCyrillic,
-                    pt: x.propagateTaint === true,
-                });
+
+                const p = String(x.pattern || '');
+                const f = String(x.flags || '');
+                const d = String(x.desc || '');
+
+                const sortKey = `${p}\x1f${f}\x1f${d}`;
+                const serialized =
+                      this._enc(p) + '|' +
+                      this._enc(f) + '|' +
+                      this._enc(d) + '|' +
+                      (x.flagMask >>> 0) + '|' +
+                      (x.preservePunct ? '1' : '0') + '|' +
+                      (x.expandCyrillic ? '1' : '0') + '|' +
+                      (x.propagateTaint === true ? '1' : '0');
+                temp.push([sortKey, serialized]);
             }
-            arr.sort((a, b) => (a.p + '\x1f' + a.f + '\x1f' + a.d).localeCompare(b.p + '\x1f' + b.f + '\x1f' + b.d));
-            return arr;
+            temp.sort(this._binSort);
+
+            const result = new Array(temp.length);
+            for (let i = 0; i < temp.length; i++) result[i] = temp[i][1];
+            return result;
         };
-        return h32(JSON.stringify({ t: norm(threadRules), r: norm(replyRules) }));
+
+        const tArr = processRules(threadRules);
+        const rArr = processRules(replyRules);
+        const final = `t[${tArr.length}]:${tArr.join(';')}|r[${rArr.length}]:${rArr.join(';')}`;
+
+        return h32(final);
     }
 
     // ---------- util ----------
+
+    _enc(v) {
+        if (v === null || v === undefined) return '0:';
+        const s = String(v); return `${s.length}:${s}`;
+    };
+
+    _binSort(a, b) { return (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); }
 
 	_toMap(arr) {
 		const out = new Map();
@@ -3399,12 +3454,20 @@ class Post {
                 get() { return this.el?.querySelector('.post__message') || null; },
                 configurable: true
             },
+            refmap: {
+                get() { return this.el?.querySelector('.post__refmap') || null; },
+                configurable: true
+            },
             outLinks: {
                 get() { return this.message?.querySelectorAll('.post-reply-link') || null; },
                 configurable: true
             },
             images: {
                 get() { return this.el?.querySelector('.post__images') || null; },
+                configurable: true
+            },
+            refl: {
+                get() { return this.details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]') || null; },
                 configurable: true
             }
         });
@@ -3467,8 +3530,10 @@ class Post {
     get thread() { return (this._cache.thread ??= document.getElementById('thread-' + this.threadId)) || null; }
     get details() { return (this._cache.details ??= document.getElementById('post-details-' + this.num)) || null; }
     get message() { return (this._cache.message ??= document.getElementById('m' + this.num))|| null; }
+    get refmap() { return (this._cache.refmap ??= document.getElementById('refmap-' + this.num)) || null; }
     get outLinks() { return (this._cache.outLinks ??= this.message?.querySelectorAll('.post-reply-link')) || []; }
     get images() { return (this._cache.images ??= this.el?.querySelector('.post__images')) || null; }
+    get refl() { return (this._cache.refl ??= this.details?.querySelector('a.js-post-reply-btn.post__reflink[data-num]')) || null; }
 
     get replies() { return this.rec.replies || []; }
     get repliesTo() { return this.rec.repliesTo || []; }
@@ -4257,7 +4322,7 @@ const openModal = (() => {
 
 		/* ================== EXPORT / IMPORT / RESET ================== */
 		const buildExportPayload = ({ scope, what }) => {
-			const payload = { version: '1.1', exportDate: new Date().toISOString(), scope };
+			const payload = { version: '1.1.1', exportDate: new Date().toISOString(), scope };
 			if (what === 'rules' || what === 'both') {
 				const { threadRules, replyRules } = readRulesForScope(scope);
 				payload.threadRules = threadRules;
@@ -6105,8 +6170,6 @@ const main = () => {
     globalThis.addEventListener('pagehide', () => opsManager.scheduleSave.flush());
 
     // makaba
-    const cl = postProcessor._clickedLinks;
-
     const origFetchPosts = proto.fetchPosts;
     proto.fetchPosts = function(param, callback, attempt = 1) {
         const cb = (typeof callback === 'function') ? callback : () => {};
@@ -6202,14 +6265,55 @@ const main = () => {
                 if (m) {
                     return originalStage.call(this, name, id, type, () => {
                         new Function(m[1].replace(/var\s+funcPostPreview\s*=\s*function/, 'globalThis.funcPostPreview = function')).call(this);
-
+                        const timers = new Map();
                         const origFuncPostPreview = unsafeWindow.funcPostPreview;
                         unsafeWindow.funcPostPreview = function(htm) {
                             const num = htm.match(/id="(\d+)"/)?.[1];
                             if (!num) return origFuncPostPreview.call(this, htm);
-                            opsManager.queueJsOp('preview:init', () => postProcessor.processNewPost(Post.getPreview(num)));
+                            opsManager.queueJsOp('preview:init', () => {
+                                const post = Post.getPreview(num);
+                                if (!post) return;
+                                if (greyscale) {
+                                    const key = num + 'p';
+                                    const prev = timers.get(key);
+                                    if (prev) { clearTimeout(prev); timers.delete(key); }
+                                    timers.set(num + 'p', setTimeout(() => {
+                                        timers.delete(key);
+                                        const id = post.num;
+                                        if (post.el?.isConnected) {
+                                            if (!stateManager.isSeen(id)) postProcessor.toggleSeen(id, true);
+                                            const links = document.querySelectorAll('.post_preview .post-reply-link, .post_preview a.js-post-reply-btn.post__reflink') || [];
+                                            for (let i = 0; i < links.length; ++i) {
+                                                const l = links[i];
+                                                if (stateManager.isSeen(String(l.dataset.num || ''))) opsManager.queueWrite(l, { classAdd: 'tm-clicked' });
+                                            }
+                                        }
+                                    }, CONFIG.PREVIEW_GREYSCALE_DELAY));
+                                }
+                                postProcessor.processNewPost(post);
+                            });
                             return origFuncPostPreview.call(this, htm);
                         };
+                        if (greyscale) {
+                            document.getElementById('js-posts').addEventListener('mouseover', (e) => {
+                                const link = e.target.closest('.post-reply-link');
+                                if (!link) return;
+                                const id = String(link.dataset.num || '');
+                                if (id) {
+                                    const key = id + 'l';
+                                    const prev = timers.get(key);
+                                    if (prev) { clearTimeout(prev); timers.delete(key); }
+                                    timers.set(id + 'l', setTimeout(() => {
+                                        timers.delete(key);
+                                        const post = Post.getPreview(id);
+                                        if (post && post.el?.isConnected) {
+                                            const pid = String(link.closest('.post[data-num]')?.dataset.num || '');
+                                            if (pid && !stateManager.isSeen(pid)) postProcessor.toggleSeen(pid, true);
+                                        }
+                                    }, CONFIG.PREVIEW_GREYSCALE_DELAY));
+                                }
+                            });
+                        }
                     });
                 }
             }
@@ -6247,9 +6351,9 @@ const main = () => {
 
             let cls = 'post-reply-link ';
             if (colorize) {
-                if (greyscale && cl.has(n)) cls += 'tm-clicked';
+                if (greyscale && stateManager.isSeen(n)) cls += 'tm-clicked';
                 else cls += KELLY[n % KELLY_LEN];
-            } else if (greyscale && cl.has(n)) {
+            } else if (greyscale && stateManager.isSeen(n)) {
                 cls += 'tm-clicked';
             }
 
