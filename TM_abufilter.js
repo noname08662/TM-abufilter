@@ -2983,11 +2983,12 @@ class PostProcessor {
 
                 if (isMyPost) this.toggleSeen(rid, true);
                 if (trunc) {
-                    const txt = (rid === threadId) ? '>>OP' : `>>${String(postR?.postNum || rid.slice(-keep))}` + (postR?.isMyPost ? ' (You)' : '');
+	                const n = String(postR?.postNum || rid.slice(-keep));
+                    const txt = (rid === threadId) ? '>>OP' : `>>${n}` + (postR?.isMyPost ? ' (You)' : '');
 			        if (greyscale && this.state.isSeen(rid)) {
 			            this.ops.queueWrite(l, { text: txt, classAdd: 'tm-clicked' });
 			        } else if (colorize) {
-			            this.ops.queueWriteWithKelly(l, postR?.postNum || rid, { text: txt });
+			            this.ops.queueWriteWithKelly(l, n, { text: txt });
 			        } else {
 			            this.ops.queueWrite(l, { text: txt });
 			        }
@@ -6403,4 +6404,3 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
-
