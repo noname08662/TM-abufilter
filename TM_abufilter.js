@@ -2331,8 +2331,6 @@ class PostProcessor {
         this.state = stateManager;
         this.ops = opsManager;
         this._bound = false;
-        this._pendingControlAppends = new Map();
-        this._controlAppendScheduled = false;
 
         this.state.on('state:change', this.handleStateChange);
         this.state.on('state:clear', this.handleStateClear);
@@ -2421,28 +2419,9 @@ class PostProcessor {
         [true]: (post) => {
             const details = post.details;
             if (!details || details.dataset.tm_controlsSet) return;
-            this._pendingControlAppends.set(details, post);
-            if (!this._controlAppendScheduled) {
-                this._controlAppendScheduled = true;
-                queueMicrotask(() => {
-					this._controlAppendScheduled = false;
-					if (this._pendingControlAppends.size === 0) return;
-					const batch = new Map(this._pendingControlAppends);
-					this._pendingControlAppends.clear();
-					this.ops.queueJsOp('batch-append-controls', () => {
-						for (const [details, post] of batch) {
-							if (!details.isConnected || details.dataset.tm_controlsSet) continue;
-							details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
-							this._fmt(details, post); this._rt(details);
-							details.dataset.tm_controlsSet = '1';
-                            if (post._pendingSnippet) {
-                                this.handleMatchSnippet(post);
-                                post._pendingSnippet = null;
-                            }
-						}
-					});
-				});
-            }
+            details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
+            this._fmt(details, post); this._rt(details);
+            details.dataset.tm_controlsSet = '1';
         },
         [null]: (post) => { if (post.el) this._controlsIO.observe(post.el); },
         [false]: (post) => { if (post.el) this._controlsIO.observe(post.el); }
