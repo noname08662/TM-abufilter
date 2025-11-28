@@ -2,7 +2,7 @@
 // @name         TM abufilter
 // @description  Автоскрытие тредов и постов, относительное время, цветные рефки, и еще немного мелочи. GUI управление.
 // @namespace    obezyana_na_palke
-// @version      1.1.1
+// @version      1.1.2
 // @author       @noname08662
 // @match        *://2ch.su/*
 // @match        *://2ch.life/*
@@ -2049,11 +2049,11 @@ class StateManager extends Emitter {
 		this._emitQ.push(evt);
 		if (!this._emitScheduled) {
 			this._emitScheduled = true;
-			this.ops.queueJsOp('state:flush', () => this._flushEmits());
+            queueMicrotask(this._flushEmits);
 		}
 	}
 
-	_flushEmits() {
+	_flushEmits = () => {
 		if (!this._emitQ.length) return;
 
 		const batch = this._emitQ.splice(0);
@@ -2096,15 +2096,25 @@ class StateManager extends Emitter {
 		}
 
 		if (isSet) {
-			st[propName] = { ...(st[propName] || {}), ...payload };
-			st.flags |= flagMask;
-		} else {
-			if (!hadFlag) return;
-			st.flags &= ~flagMask;
-			delete st[propName];
+            st[propName] = { ...(st[propName] || {}), ...payload };
+            st.flags |= flagMask;
+            delete st[propName + 'Deleted'];
+        } else {
+            if (!hadFlag) return;
+            st.flags &= ~flagMask;
+            st[propName + 'Deleted'] = { time: Date.now() };
+            delete st[propName];
+        }
+		
+		let hasTombstones = false;
+		for (const key in st) {
+			if (key.endsWith('Deleted')) {
+				hasTombstones = true;
+				break;
+			}
 		}
 
-		if (st.flags === 0) this._state.delete(id);
+		if (st.flags === 0 && !hasTombstones) this._state.delete(id);
 		else this._state.set(id, st);
 
 		this._enqueueEmit({
@@ -2321,6 +2331,8 @@ class PostProcessor {
         this.state = stateManager;
         this.ops = opsManager;
         this._bound = false;
+        this._pendingControlAppends = new Map();
+        this._controlAppendScheduled = false;
 
         this.state.on('state:change', this.handleStateChange);
         this.state.on('state:clear', this.handleStateClear);
@@ -2409,8 +2421,24 @@ class PostProcessor {
         [true]: (post) => {
             const details = post.details;
             if (!details || details.dataset.tm_controlsSet) return;
-            details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
-            this._fmt(details, post); this._rt(details);
+            this._pendingControlAppends.set(details, post);
+            if (!this._controlAppendScheduled) {
+                this._controlAppendScheduled = true;
+                queueMicrotask(() => {
+					this._controlAppendScheduled = false;
+					if (this._pendingControlAppends.size === 0) return;
+					const batch = new Map(this._pendingControlAppends);
+					this._pendingControlAppends.clear();
+					this.ops.queueJsOp('batch-append-controls', () => {
+						for (const [details, post] of batch) {
+							if (!details.isConnected || details.dataset.tm_controlsSet) continue;
+							details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
+							this._fmt(details, post); this._rt(details);
+							details.dataset.tm_controlsSet = '1';
+						}
+					});
+				});
+            }
         },
         [null]: (post) => { if (post.el) this._controlsIO.observe(post.el); },
         [false]: (post) => { if (post.el) this._controlsIO.observe(post.el); }
@@ -2451,37 +2479,47 @@ class PostProcessor {
 
     _fmt() {
         if (!CONFIG.DETAILS_REFORMAT) {
-            if (trunc || colorize) {
-                return (_details, post) => {
-                    const refl = post.refl;
-                    if (!refl) return;
+			if (trunc || colorize) {
+				return (_details, post) => {
+					const refl = post.refl;
+					if (!refl) return;
 
-                    let tn = refl.firstChild;
-                    if (!tn || tn.nodeType !== 3) {
-                        tn = document.createTextNode(refl.textContent || '');
-                        refl.replaceChildren(tn);
-                    }
-                    const id = post.num;
-                    const text = trunc ? (post.postNum || (id || tn.data).slice(-keep)) : (id || tn.data);
-
-                    if (refl.dataset._lastTxt !== text) {
-                        this.ops.queueJsOp('fmt' + id, () => {
-                            tn.data = text;
-                            refl.dataset._lastTxt = text;
-                        });
-                    }
-                    if (greyscale && this.state.isSeen(id)) this.ops.queueWrite(refl, { text, classAdd: 'tm-clicked' });
-                    else if (colorize) this.ops.queueWriteWithKelly(refl, text);
-                };
-            } else if (greyscale) {
-                return (_details, post) => {
-                    const refl = post.refl;
-                    if (!refl) return;
-                    if (this.state.isSeen(post.num)) this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
-                }
-            }
-            return () => {};
-        }
+					const id = post.num;
+					this.ops.queueJsOp('fmt-tn-' + id, () => {
+						let tn = refl.firstChild;
+						if (!tn || tn.nodeType !== 3) {
+							tn = document.createTextNode(refl.textContent || '');
+							refl.replaceChildren(tn);
+						}
+						refl._tn = tn;
+					});
+					const text = trunc ? (post.postNum || (id || refl.textContent).slice(-keep)) : id;
+					if (refl.dataset._lastTxt !== text) {
+						this.ops.queueJsOp('fmt-txt-' + id, () => {
+							const tn = refl._tn || refl.firstChild;
+							if (tn && tn.nodeType === 3) {
+								tn.data = text;
+								refl.dataset._lastTxt = text;
+							}
+						});
+					}
+					if (greyscale && this.state.isSeen(id)) {
+						this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
+					} else if (colorize) {
+						this.ops.queueWriteWithKelly(refl, text);
+					}
+				};
+			} else if (greyscale) {
+				return (_details, post) => {
+					const refl = post.refl;
+					if (!refl) return;
+					if (this.state.isSeen(post.num)) {
+						this.ops.queueWrite(refl, { classAdd: 'tm-clicked' });
+					}
+				}
+			}
+			return () => {};
+		}
 
         const PARTS = new WeakMap();
         const DETAILS_INIT = new WeakSet();
@@ -2507,52 +2545,56 @@ class PostProcessor {
             const anon = details.querySelector('.post__anon');
             const refl = post.refl;
 
-            topPart(details, num )?.classList.add('post__detailpart--num');
-            topPart(details, refl)?.classList.add('post__detailpart--refl');
-            topPart(details, details.querySelector('.post__time'))?.classList.add('post__detailpart--time');
-            topPart(details, details.querySelector('.post__ophui'))?.classList.add('post__detailpart--op');
-            if (mail) topPart(details, mail)?.classList.add('post__detailpart--mail');
+			this.ops.queueWrite(topPart(details, num), { classAdd: 'post__detailpart--num' });
+            this.ops.queueWrite(topPart(details, refl), { classAdd: 'post__detailpart--refl' });
+            this.ops.queueWrite(topPart(details, details.querySelector('.post__time')), { classAdd: 'post__detailpart--time' });
+            this.ops.queueWrite(topPart(details, details.querySelector('.post__ophui')), { classAdd: 'post__detailpart--op' });
+            if (mail) this.ops.queueWrite(topPart(details, mail), { classAdd: 'post__detailpart--mail' });
 
             const hasMailto = !!(mail && (mail.getAttribute('href')||'').startsWith('mailto:'));
             if (hasMailto) {
                 const href = mail.getAttribute('href');
                 const decoded = decodeURIComponent(href.slice(7).split('?')[0] || '');
-                if (decoded && mail.textContent !== decoded) mail.textContent = decoded;
+                if (decoded && mail.textContent !== decoded) this.ops.queueWrite(mail, { text: decoded });
             }
             if (anon) {
-                const idEl = anon.querySelector('[id^="id_tag_"]');
-                if (idEl) {
-                    anon.replaceChildren(idEl);
-                } else if (!hasMailto) {
-                    let node = anon.firstChild;
-                    while (node) {
-                        const next = node.nextSibling;
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            const s = node.data;
-                            let p = 0;
-                            while (p < s.length && isSpace(s.charCodeAt(p))) p++;
-                            if (s.substr(p, ANON_STR.length) === ANON_STR) {
-                                let q = p + ANON_STR.length;
-                                while (q < s.length && (s.charCodeAt(q) === 32 || s.charCodeAt(q) === 160)) q++;
-                                const newText = s.slice(0, p) + s.slice(q);
-                                if (newText.length) node.data = newText;
-                                else anon.removeChild(node);
-                            }
-                        }
-                        node = next;
-                    }
-                    if (!anon.firstElementChild && anon.textContent.trim() === '') anon.remove();
-                }
-            }
-            if (refl) {
-                let tn = refl.firstChild;
-                if (!tn || tn.nodeType !== 3) {
-                    tn = document.createTextNode(refl.textContent || '');
-                    refl.replaceChildren(tn);
-                }
-                refl.dataset._lastTxt = tn.data;
-                refl._tn = tn;
-            }
+				const idEl = anon.querySelector('[id^="id_tag_"]');
+				if (idEl) {
+					this.ops.queueJsOp('anon-cleanup-' + post.num, anon.replaceChildren(idEl));
+				} else if (!hasMailto) {
+					this.ops.queueJsOp('anon-text-cleanup-' + post.num, () => {
+						let node = anon.firstChild;
+						while (node) {
+							const next = node.nextSibling;
+							if (node.nodeType === Node.TEXT_NODE) {
+								const s = node.data;
+								let p = 0;
+								while (p < s.length && isSpace(s.charCodeAt(p))) p++;
+								if (s.substr(p, ANON_STR.length) === ANON_STR) {
+									let q = p + ANON_STR.length;
+									while (q < s.length && (s.charCodeAt(q) === 32 || s.charCodeAt(q) === 160)) q++;
+									const newText = s.slice(0, p) + s.slice(q);
+									if (newText.length) node.data = newText;
+									else anon.removeChild(node);
+								}
+							}
+							node = next;
+						}
+						if (!anon.firstElementChild && anon.textContent.trim() === '') anon.remove();
+					});
+				}
+			}
+			if (refl) {
+				this.ops.queueJsOp('refl-init-' + post.num, () => {
+					let tn = refl.firstChild;
+					if (!tn || tn.nodeType !== 3) {
+						tn = document.createTextNode(refl.textContent || '');
+						refl.replaceChildren(tn);
+					}
+					refl.dataset._lastTxt = tn.data;
+					refl._tn = tn;
+				});
+			}
 
             const bundle = { num, refl, mail, anon };
             PARTS.set(details, bundle);
@@ -2643,37 +2685,53 @@ class PostProcessor {
             let st = C.get(el);
             if (st) return st;
             const abs = el.dataset.tmAbsTime || el.textContent || '';
-            if (!el.dataset.tmAbsTime) el.dataset.tmAbsTime = abs;
+            if (!el.dataset.tmAbsTime) this.ops.queueWrite(el, { dataset: { tmAbsTime: abs } });
 
             const d = fastParse(abs);
             if (!d) return null;
 
-            let tn = el.firstChild;
-            if (!tn || tn.nodeType !== 3) {
-                tn = document.createTextNode(el.textContent || '');
-                el.replaceChildren(tn);
-            }
+			this.ops.queueJsOp('rt-prime-' + (el.id || Math.random()), () => {
+				let tn = el.firstChild;
+				if (!tn || tn.nodeType !== 3) {
+					tn = document.createTextNode(el.textContent || '');
+					el.replaceChildren(tn);
+				}
+				const state = { abs, dateMs: d.getTime(), tn, last: tn.data };
+				C.set(el, state);
+			});
 
-            st = { abs, dateMs: d.getTime(), tn, last: tn.data };
-            C.set(el, st);
-            return st;
+			const tn = el.firstChild;
+			st = { abs, dateMs: d.getTime(), tn, last: tn?.data || abs };
+			C.set(el, st);
+			return st;
         };
 
-        const updateAll = (root = document) => {
-            const nodes = root.getElementsByClassName('post__time');
-            if (!nodes.length) return;
-            const nowMs = Date.now();
-            for (let i = 0; i < nodes.length; i++) {
-                const el = nodes[i];
-                const st = C.get(el) || prime(el);
-                if (!st) continue;
-                const txt = formatRelative(st.dateMs, nowMs);
-                if (txt !== st.last) {
-                    st.tn.data = txt;
-                    st.last = txt;
-                }
-            }
-        };
+		const updateAll = (root = document) => {
+			const nodes = root.getElementsByClassName('post__time');
+			if (!nodes.length) return;
+			const nowMs = Date.now();
+			
+			const updates = [];
+			for (let i = 0; i < nodes.length; i++) {
+				const el = nodes[i];
+				const st = C.get(el) || prime(el);
+				if (!st) continue;
+				const txt = formatRelative(st.dateMs, nowMs);
+				if (txt !== st.last) {
+					updates.push({ el, st, txt });
+				}
+			}
+			if (updates.length > 0) {
+				this.ops.queueJsOp('rt-update-all', () => {
+					for (const { st, txt } of updates) {
+						if (st.tn && st.tn.nodeType === 3) {
+							st.tn.data = txt;
+							st.last = txt;
+						}
+					}
+				});
+			}
+		};
 
         let timer = 0;
         const schedule = () => {
@@ -3354,36 +3412,40 @@ class CrossTabSync {
 
             const curr = this.state._state.get(id);
 
-            if (next?.whitelist && (!curr?.whitelist || this._getTime(next, 'whitelist') > this._getTime(curr, 'whitelist'))) {
-                this.state.setWhitelist(id, next.whitelist);
-                if(this.state.isHidden(id)) this.state.deleteHidden(id);
-            } else if (!next?.whitelist && curr?.whitelist && prev?.whitelist) {
-                this.state.deleteWhitelist(id);
-            }
+			if (next?.whitelist && (!curr?.whitelist || this._getTime(next, 'whitelist') > this._getTime(curr, 'whitelist'))) {
+				this.state.setWhitelist(id, next.whitelist);
+				if(this.state.isHidden(id)) this.state.deleteHidden(id);
+			} else if (curr?.whitelist
+					&& (!next?.whitelist || (next?.whitelistDeleted?.time || 0) > this._getTime(curr, 'whitelist'))) {
+				this.state.deleteWhitelist(id);
+			}
 
-            if (next?.hidden && next.hidden.reason === 'manual') {
-                if (!curr?.hidden || this._getTime(next, 'hidden') > this._getTime(curr, 'hidden')) {
-                    this.state.setHidden(id, next.hidden);
-                }
-            } else if (!next?.hidden && curr?.hidden && prev?.hidden && prev.hidden.reason === 'manual') {
-                this.state.deleteHidden(id);
-            }
+			if (next?.hidden && next.hidden.reason === 'manual') {
+				if (!curr?.hidden || this._getTime(next, 'hidden') > this._getTime(curr, 'hidden')) {
+					this.state.setHidden(id, next.hidden);
+				}
+			} else if (curr?.hidden && curr.hidden.reason === 'manual'
+					&& (!next?.hidden || (next?.hiddenDeleted?.time || 0) > this._getTime(curr, 'hidden'))) {
+				this.state.deleteHidden(id);
+			}
 
-            if (next?.collapsed && next.collapsed.reason === 'manual') {
-                if (!curr?.collapsed || this._getTime(next, 'collapsed') > this._getTime(curr, 'collapsed')) {
-                    this.state.setCollapsed(id, next.collapsed);
-                }
-            } else if (!next?.collapsed && curr?.collapsed && prev?.collapsed && prev.collapsed.reason === 'manual') {
-                this.state.deleteCollapsed(id);
-            }
+			if (next?.collapsed && next.collapsed.reason === 'manual') {
+				if (!curr?.collapsed || this._getTime(next, 'collapsed') > this._getTime(curr, 'collapsed')) {
+					this.state.setCollapsed(id, next.collapsed);
+				}
+			} else if (curr?.collapsed && curr.collapsed.reason === 'manual'
+					&& (!next?.collapsed || (next?.collapsedDeleted?.time || 0) > this._getTime(curr, 'collapsed'))) {
+				this.state.deleteCollapsed(id);
+			}
 
-            if (next?.mediaCollapsed && next.mediaCollapsed.reason === 'manual') {
-                if (!curr?.mediaCollapsed || this._getTime(next, 'mediaCollapsed') > this._getTime(curr, 'mediaCollapsed')) {
-                    this.state.setMediaCollapsed(id, next.mediaCollapsed);
-                }
-            } else if (!next?.mediaCollapsed && curr?.mediaCollapsed && prev?.mediaCollapsed && prev.mediaCollapsed.reason === 'manual') {
-                this.state.deleteMediaCollapsed(id);
-            }
+			if (next?.mediaCollapsed && next.mediaCollapsed.reason === 'manual') {
+				if (!curr?.mediaCollapsed || this._getTime(next, 'mediaCollapsed') > this._getTime(curr, 'mediaCollapsed')) {
+					this.state.setMediaCollapsed(id, next.mediaCollapsed);
+				}
+			} else if (curr?.mediaCollapsed && curr.mediaCollapsed.reason === 'manual'
+					&& (!next?.mediaCollapsed || (next?.mediaCollapsedDeleted?.time || 0) > this._getTime(curr, 'mediaCollapsed'))) {
+				this.state.deleteMediaCollapsed(id);
+			}
         }
     }
 
@@ -4323,7 +4385,7 @@ const openModal = (() => {
 
 		/* ================== EXPORT / IMPORT / RESET ================== */
 		const buildExportPayload = ({ scope, what }) => {
-			const payload = { version: '1.1.1', exportDate: new Date().toISOString(), scope };
+			const payload = { version: '1.1.2', exportDate: new Date().toISOString(), scope };
 			if (what === 'rules' || what === 'both') {
 				const { threadRules, replyRules } = readRulesForScope(scope);
 				payload.threadRules = threadRules;
