@@ -2105,7 +2105,7 @@ class StateManager extends Emitter {
             st[propName + 'Deleted'] = { time: Date.now() };
             delete st[propName];
         }
-		
+
 		let hasTombstones = false;
 		for (const key in st) {
 			if (key.endsWith('Deleted')) {
@@ -2714,7 +2714,7 @@ class PostProcessor {
 			const nodes = root.getElementsByClassName('post__time');
 			if (!nodes.length) return;
 			const nowMs = Date.now();
-			
+
 			const updates = [];
 			for (let i = 0; i < nodes.length; i++) {
 				const el = nodes[i];
@@ -6291,11 +6291,14 @@ const main = () => {
                 time: Date.now()
             });
         } else {
-            postProcessor.toggleCollapsed(post, true, {
-                reason: 'manual',
-                time: Date.now(),
-                propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
-            });
+			stateManager.deletePassthrough(post.num);
+            if (postProcessor.processPost(post)) {
+                postProcessor.toggleCollapsed(post, true, {
+                    reason: 'manual',
+                    time: Date.now(),
+                    propagateTaint: CONFIG.PROPAGATE_TAINT_BY_DEFAULT
+                });
+            }
         }
         return false;
     };
@@ -6470,4 +6473,3 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
-
