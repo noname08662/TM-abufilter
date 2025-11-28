@@ -2435,6 +2435,10 @@ class PostProcessor {
 							details.appendChild(T_POST_CONTROLS.content.cloneNode(true));
 							this._fmt(details, post); this._rt(details);
 							details.dataset.tm_controlsSet = '1';
+                            if (post._pendingSnippet) {
+                                this.handleMatchSnippet(post);
+                                post._pendingSnippet = null;
+                            }
 						}
 					});
 				});
@@ -6466,3 +6470,4 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
