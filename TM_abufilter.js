@@ -6400,9 +6400,9 @@ const main = () => {
 
             let cls = 'post-reply-link ';
             if (colorize) {
-                if (greyscale && stateManager.isSeen(n)) cls += 'tm-clicked';
+                if (greyscale && stateManager.isSeen(String(id))) cls += 'tm-clicked';
                 else cls += KELLY[n % KELLY_LEN];
-            } else if (greyscale && stateManager.isSeen(n)) {
+            } else if (greyscale && stateManager.isSeen(String(id))) {
                 cls += 'tm-clicked';
             }
 
@@ -6452,3 +6452,4 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
+
