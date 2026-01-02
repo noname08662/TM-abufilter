@@ -202,7 +202,7 @@ const CONFIG_DEFINITIONS = {
 		{ key: 'COLORIZE_REPLY_LINKS', label: 'Раскрашивать ссылки', type: 'checkbox', default: true, desc: 'Ссылки-ответы будут окрашиваться по номеру поста', needsReload: true },
 		{ key: 'AUTO_COLLAPSE_MEDIA_H', label: 'Свёртывать медиа ОП-постов', type: 'checkbox', default: false, desc: 'Прикреплённые к ОП-постам файлы будут свёрнуты автоматически' },
 		{ key: 'AUTO_COLLAPSE_MEDIA_P', label: 'Свёртывать медиа постов', type: 'checkbox', default: false, desc: 'Прикреплённые к постам файлы будут свёрнуты автоматически' },
-		{ key: 'KEEP_REMOVED_POSTS', label: 'Не удалять потёртые посты', type: 'checkbox', default: true, desc: 'Фича не была опробована в действии' },
+		{ key: 'KEEP_REMOVED_POSTS', label: 'Не удалять потёртые посты', type: 'checkbox', default: true, desc: '(фича не работает)' },
 	],
 	advanced: [
 		{ key: 'DAYS_TO_KEEP', label: 'Хранить дней', type: 'number', min: 1, max: 365, default: 7, desc: 'Дней для хранения данных о скрытых/свёрнутых' },
@@ -362,6 +362,8 @@ const TM_STYLE = (`
 
 .post_preview .tm-collapse-part,
 .post_type_oppost .tm-collapse-part { display: none !important; }
+
+.post__btn_type_favorite { display: block !important; }
 
 .post:has(.post__images) .tm-media-part { display: flex; }
 
@@ -6452,4 +6454,3 @@ if (typeof unsafeWindow.Post !== 'undefined') {
 
 
 })();
-
