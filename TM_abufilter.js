@@ -1579,7 +1579,7 @@ class FilterEngine {
         'е': '[еeё]', 'ё': '[еeё]', 'з': '[з3]', 'и': '[iuий]', 'й': '[iuий]',
         'к': '[kк]', 'м': '[mм]', 'н': '[hн]', 'о': '[oо0]', 'п': '[nп]',
         'р': '[pр]', 'с': '[cс]', 'т': '[tт]', 'у': '[yу]', 'х': '[xх]',
-        'ч': '[4ч]', 'ш': '[шщ]', 'щ': '[шщ]', 'ъ': '[bъь]', 'ь': '[bъь]',
+        'ч': '[4ч]', 'ш': '[wшщ]', 'щ': '[шщ]', 'ъ': '[bъь]', 'ь': '[bъь]',
     }
 
     constructor() {
@@ -4626,20 +4626,15 @@ const openModal = (() => {
 
 			const outArray = [];
 			const map = new Array(input.length);
-			let prevWasSpace = true, pendingSpace = false, lastScript = 0, outIdx = 0, mapIdx = 0;
+			let prevWasSpace = true, pendingSpace = false, outIdx = 0, mapIdx = 0;
 
 			for (let i = 0; i < input.length; i++) {
 				const code = input.charCodeAt(i);
 				if ((code <= 0x20) || code === 0xA0 || (!preservePunct && (code < 128 && ASCII_PUNCT[code]))) {
 					if (!prevWasSpace) { pendingSpace = true; prevWasSpace = true; }
-					lastScript = 0;
 					continue;
 				}
-				let curScript = 0;
-				if ((code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)) curScript = 1;
-				else if ((code >= 0x0400 && code <= 0x052F) || (code >= 0x2DE0 && code <= 0x2DFF) || (code >= 0xA640 && code <= 0xA69F)) curScript = 2;
 
-				if (!preservePunct && !prevWasSpace && lastScript && curScript && curScript !== lastScript) pendingSpace = true;
 				if (pendingSpace && outIdx > 0) {
 					outArray[outIdx++] = ' ';
 					map[mapIdx++] = i;
@@ -4648,7 +4643,6 @@ const openModal = (() => {
 				outArray[outIdx++] = input[i];
 				map[mapIdx++] = i;
 				prevWasSpace = false;
-				if (curScript) lastScript = curScript;
 			}
 
 			const result = !returnMap ?
