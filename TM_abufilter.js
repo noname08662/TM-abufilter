@@ -279,7 +279,7 @@ const FLAG_DEFINITIONS = [
 
 const FLAG_BY_ID = Object.fromEntries(FLAG_DEFINITIONS.map(c => [c.id, c]));
 
-const softAnchorToken = '\\s*\\p{L}+(?:[\\s\\p{P}\\p{S}]*)?';
+const softAnchorToken = '(?=([^\\p{L}]*\\p{L}+(?:[^\\p{L}]+)?))\\1';
 
 
 // ---------- STYLES ----------
@@ -1744,7 +1744,7 @@ class FilterEngine {
         source = source
             .replace(/!&/g, '(?<!\\p{L})')
             .replace(/&!/g, '(?!\\p{L})')
-            .replace(/~/g, '\\S*\\s*?')
+            .replace(/~+/g, m => `(?:[^\\s]+\\s*?){0,${m.length}}`)
             .replace(/\s/g, '\\W');
 
         const startMatch = source.match(/^#(\d*)\D*(\d*)#/);
