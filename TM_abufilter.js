@@ -1550,7 +1550,6 @@ input[type="number"].tm-nosnap { -moz-appearance: textfield; }
 
 .tm-details-on .post__ophui {
   color: var(--theme_default_postnum);
-  padding: 0;
 }
 
 .tm-trunc-on .post__number { display: none; }
@@ -2508,7 +2507,7 @@ class PostProcessor {
 
         const PARTS = new WeakMap();
         const DETAILS_INIT = new WeakSet();
-        const ANON_ID = /Аноним[\s\u00A0]*ID:[\s\u00A0]*/g;
+        const ANON_ID = /Аноним[\s\u00A0]*(?:ID:[\s\u00A0]*)*/g;
 
         const topPart = (details, node) => {
             if (!node) return null;
