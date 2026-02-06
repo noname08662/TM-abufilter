@@ -2508,8 +2508,7 @@ class PostProcessor {
 
         const PARTS = new WeakMap();
         const DETAILS_INIT = new WeakSet();
-        const ANON_STR = 'Аноним';
-        const isSpace = c => c === 32 || c === 160 || c === 9 || c === 10 || c === 13;
+        const ANON_ID = /Аноним[\s\u00A0]*ID:[\s\u00A0]*/g;
 
         const topPart = (details, node) => {
             if (!node) return null;
@@ -2545,28 +2544,25 @@ class PostProcessor {
             if (anon) {
 				const idEl = anon.querySelector('[id^="id_tag_"]');
 				if (idEl) {
-					this.ops.queueJsOp('anon-cleanup-' + post.num, anon.replaceChildren(idEl));
+					this.ops.queueJsOp('anon-cleanup-' + post.num, () => {
+                        if (anon && idEl) anon.replaceChildren(idEl);
+                    });
 				} else if (!hasMailto) {
-					this.ops.queueJsOp('anon-text-cleanup-' + post.num, () => {
-						let node = anon.firstChild;
-						while (node) {
-							const next = node.nextSibling;
-							if (node.nodeType === Node.TEXT_NODE) {
-								const s = node.data;
-								let p = 0;
-								while (p < s.length && isSpace(s.charCodeAt(p))) p++;
-								if (s.substr(p, ANON_STR.length) === ANON_STR) {
-									let q = p + ANON_STR.length;
-									while (q < s.length && (s.charCodeAt(q) === 32 || s.charCodeAt(q) === 160)) q++;
-									const newText = s.slice(0, p) + s.slice(q);
-									if (newText.length) node.data = newText;
-									else anon.removeChild(node);
-								}
-							}
-							node = next;
-						}
-						if (!anon.firstElementChild && anon.textContent.trim() === '') anon.remove();
-					});
+                    this.ops.queueJsOp('anon-text-cleanup-' + post.num, () => {
+                        if (anon.firstElementChild) {
+                            let node = anon.firstChild;
+                            while (node) {
+                                if (node.nodeType === node.TEXT_NODE) {
+                                    node.data = node.data.replace(ANON_ID, '');
+                                }
+                                node = node.nextSibling;
+                            }
+                        } else {
+                            const cleaned = anon.textContent.replace(ANON_ID, '');
+                            if (cleaned.trim() === '') anon.remove();
+                            else anon.textContent = cleaned;
+                        }
+                    });
 				}
 			}
 			if (refl) {
