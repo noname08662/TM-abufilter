@@ -2,7 +2,7 @@
 // @name         TM abufilter
 // @description  Автоскрытие тредов и постов, относительное время, цветные рефки, и еще немного мелочи. GUI управление.
 // @namespace    obezyana_na_palke
-// @version      1.1.2
+// @version      1.2
 // @author       @noname08662
 // @match        *://2ch.su/*
 // @match        *://2ch.life/*
@@ -43,7 +43,7 @@ const ASCII_PUNCT = (() => {
 
 const REPLY_OR_GREEN_RE =/<a[^>]*class="post-reply-link"[^>]*>.*?<\/a>|<span[^>]*class="[^"]*(?:unkfunc|greentext)[^"]*"[^>]*>.*?<\/span>/gis;
 const GREEN_SPAN_RE = /<span[^>]*class="[^"]*(?:unkfunc|greentext)[^"]*"[^>]*>(.*?)<\/span>/gis;
-const TAG_OR_BR_RE = /(<br\s*\/?>)|<[^>]+>/gi;
+const TAG_OR_BR_RE = /(<br\s*\/?>|<\/?(?:p|div|li|tr|h[1-6])[^>]*>)|<[^>]+>/gi;
 const PUNCT_RE = /\p{P}/gu;
 
 const DECODE_MAP = {
@@ -58,7 +58,7 @@ const DECODE_MAP = {
 const DECODE_RE = /&(?:nbsp|gt|lt|amp|quot|#39|apos|#\d+|#x[0-9a-fA-F]+);/gi;
 
 const decode = (str) => str.replace(DECODE_RE, m => {
-    const known = DECODE_MAP[m];
+    const known = DECODE_MAP[m.toLowerCase()];
     if (known !== undefined) return known;
     if (m[1] === '#') {
         if (m[2] === 'x' || m[2] === 'X') {
@@ -188,30 +188,30 @@ const safeSet = HAS_GM
 // ---------- CONFIGURATION ----------
 const CONFIG_DEFINITIONS = {
 	basic: [
-		{ key: 'WHITELIST_PARTICIPATED', label: 'Авто-белый список', type: 'checkbox', default: true, desc: 'Содержащие посты от пользователя треды (кроме скрытых вручную) будут автоматически добавлены в белый список' },
-		{ key: 'FADE_COLLAPSED_POSTS', label: 'Затенять свёрнутые', type: 'checkbox', default: true, desc: 'Свёрнутые посты будут становиться полупрозрачными' },
-		{ key: 'PROPAGATE_TAINT_BY_DEFAULT', label: '"Загрязнять" посты по умолчанию', type: 'checkbox', default: true, desc: 'Ответы на "загрязнённые" свёрнутые посты также будут свёрнуты' },
-		{ key: 'HIDE_DUP_THREADS', label: 'Скрывать дубли тредов', type: 'checkbox', default: true, desc: 'Треды, чей текст совпадает с текстом других тредов, будут скрыты автоматически' },
-		{ key: 'HIDE_DUP_POSTS', label: 'Скрывать дубли постов', type: 'checkbox', default: false, desc: 'Посты, чей текст совпадает с текстом других тредов, будут скрыты автоматически' },
-		{ key: 'RELATIVE_TIME', label: 'Относительное время', type: 'checkbox', default: true, desc: 'Время будет отображаться в относительности (напр. "2 часа назад")', needsReload: true },
+		{ key: 'WHITELIST_PARTICIPATED', label: 'Авто-белый список', type: 'checkbox', default: true, desc: 'Содержащие посты от пользователя треды (кроме скрытых вручную) будут автоматически добавлены в белый список.' },
+		{ key: 'FADE_COLLAPSED_POSTS', label: 'Затенять свёрнутые', type: 'checkbox', default: true, desc: 'Свёрнутые посты будут становиться полупрозрачными.' },
+		{ key: 'PROPAGATE_TAINT_BY_DEFAULT', label: '"Загрязнять" посты по умолчанию', type: 'checkbox', default: true, desc: 'Ответы на "загрязнённые" свёрнутые посты также будут свёрнуты.' },
+		{ key: 'HIDE_DUP_THREADS', label: 'Скрывать дубли тредов', type: 'checkbox', default: true, desc: 'Треды, чей текст совпадает с текстом других тредов, будут скрыты автоматически.' },
+		{ key: 'HIDE_DUP_POSTS', label: 'Скрывать дубли постов', type: 'checkbox', default: false, desc: 'Посты, чей текст совпадает с текстом других постов того же треда, будут скрыты автоматически.' },
+		{ key: 'RELATIVE_TIME', label: 'Относительное время', type: 'checkbox', default: true, desc: 'Время будет отображаться в относительности (напр. "2 часа назад").', needsReload: true },
 		{ key: 'MANAGER_BUTTON_POSITION', label: 'Позиция кнопки', type: 'string', default: 'bottom-left', desc: 'top-right | top-left | bottom-right | bottom-left' },
-		{ key: 'DETAILS_REFORMAT', label: 'Переформатировать детали', type: 'checkbox', default: true, desc: 'Порядок: № → время → сага → #OP → остальное', needsReload: true },
-		{ key: 'TRUNCATE_REPLY_LINKS', label: 'Обрезать ссылки-ответы', type: 'checkbox', default: true, desc: 'Только последние N цифр номера поста будут отображены', needsReload: true },
-		{ key: 'TRUNCATE_REPLY_LINKS_DIGITS', label: 'Цифр (ссылки-ответы)', type: 'number', min: 1, max: 10, default: 4, desc: 'Лимит цифр обрезанных ссылок-ответов', needsReload: true },
-		{ key: 'GREYSCALE_CLICKED_REPLY_LINKS', label: 'Затенять кликнутые ссылки', type: 'checkbox', default: true, desc: 'Кликнутые ссылки будут окрашены в серый' },
-		{ key: 'COLORIZE_REPLY_LINKS', label: 'Раскрашивать ссылки', type: 'checkbox', default: true, desc: 'Ссылки-ответы будут окрашиваться по номеру поста', needsReload: true },
-		{ key: 'AUTO_COLLAPSE_MEDIA_H', label: 'Свёртывать медиа ОП-постов', type: 'checkbox', default: false, desc: 'Прикреплённые к ОП-постам файлы будут свёрнуты автоматически' },
-		{ key: 'AUTO_COLLAPSE_MEDIA_P', label: 'Свёртывать медиа постов', type: 'checkbox', default: false, desc: 'Прикреплённые к постам файлы будут свёрнуты автоматически' },
+		{ key: 'DETAILS_REFORMAT', label: 'Переформатировать детали', type: 'checkbox', default: true, desc: 'Порядок: № → время → сага → #OP → остальное.', needsReload: true },
+		{ key: 'TRUNCATE_REPLY_LINKS', label: 'Обрезать ссылки-ответы', type: 'checkbox', default: true, desc: 'Только последние N цифр номера поста будут отображены.', needsReload: true },
+		{ key: 'TRUNCATE_REPLY_LINKS_DIGITS', label: 'Цифр (ссылки-ответы)', type: 'number', min: 1, max: 10, default: 4, desc: 'Лимит цифр обрезанных ссылок-ответов.', needsReload: true },
+		{ key: 'GREYSCALE_CLICKED_REPLY_LINKS', label: 'Затенять кликнутые ссылки', type: 'checkbox', default: true, desc: 'Кликнутые ссылки будут окрашены в серый.' },
+		{ key: 'COLORIZE_REPLY_LINKS', label: 'Раскрашивать ссылки', type: 'checkbox', default: true, desc: 'Ссылки-ответы будут окрашиваться по номеру поста.', needsReload: true },
+		{ key: 'AUTO_COLLAPSE_MEDIA_H', label: 'Свёртывать медиа ОП-постов', type: 'checkbox', default: false, desc: 'Прикреплённые к ОП-постам файлы будут свёрнуты автоматически.' },
+		{ key: 'AUTO_COLLAPSE_MEDIA_P', label: 'Свёртывать медиа постов', type: 'checkbox', default: false, desc: 'Прикреплённые к постам файлы будут свёрнуты автоматически.' },
 		{ key: 'KEEP_REMOVED_POSTS', label: 'Не удалять потёртые посты', type: 'checkbox', default: true, desc: '(фича не работает)' },
 	],
 	advanced: [
-		{ key: 'DAYS_TO_KEEP', label: 'Хранить дней', type: 'number', min: 1, max: 365, default: 7, desc: 'Дней для хранения данных о скрытых/свёрнутых' },
-		{ key: 'SNIPPET_BEFORE_CHARS', label: 'Символов до совпадения', type: 'number', min: 0, max: 100, default: 20, desc: 'Отображаемое количество символов до совпадения в вырезке текста ОП-поста во вкладке "Треды"' },
-		{ key: 'SNIPPET_AFTER_CHARS', label: 'Символов после совпадения', type: 'number', min: 10, max: 200, default: 60, desc: 'Отображаемое количество символов после совпадения в вырезке текста ОП-поста во вкладке "Треды"' },
-		{ key: 'MAX_CHARS_IN_LIST', label: 'Символов текста ОП-поста во вкладке "Треды"', type: 'number', min: 20, max: 600, default: 500, desc: 'Макс. кол-во отображаемых символов из текста треда' },
-		{ key: 'INSTANT_DETAILS', label: 'Мгновенно обрабатывать полосу деталей постов (время, номер, и т.д.)', type: 'checkbox', default: false, desc: 'На случай, если дефолтная (асинхронная) обработка создает видимое мигание' },
-		{ key: 'MAX_SNIPPET_LENGTH', label: 'Лимит символов фрагмента совпадения', type: 'number', min: 4, max: 40, default: 15, desc: 'Макс. кол-во отображаемых символов во фрагментах (совпадений) постов', needsReload: true },
-		{ key: 'PREVIEW_GREYSCALE_DELAY', label: 'Задержка затенения при взаимодействии с превью', type: 'number', min: 1000, max: 8000, default: 3000, desc: 'Временной интервал (мс) перед началом обработки ссылок' },
+		{ key: 'DAYS_TO_KEEP', label: 'Хранить дней', type: 'number', min: 1, max: 365, default: 7, desc: 'Срок хранения данных.' },
+		{ key: 'SNIPPET_BEFORE_CHARS', label: 'Символов до совпадения', type: 'number', min: 0, max: 100, default: 20, desc: 'Отображаемое количество символов до совпадения в вырезке текста ОП-поста во вкладке "Треды".' },
+		{ key: 'SNIPPET_AFTER_CHARS', label: 'Символов после совпадения', type: 'number', min: 10, max: 200, default: 60, desc: 'Отображаемое количество символов после совпадения в вырезке текста ОП-поста во вкладке "Треды".' },
+		{ key: 'MAX_CHARS_IN_LIST', label: 'Символов текста ОП-поста во вкладке "Треды"', type: 'number', min: 20, max: 600, default: 500, desc: 'Макс. кол-во отображаемых символов из текста треда.' },
+		{ key: 'INSTANT_DETAILS', label: 'Мгновенно обрабатывать полосу деталей постов (время, номер, и т.д.)', type: 'checkbox', default: false, desc: 'На случай, если дефолтная (асинхронная) обработка создает видимое мигание.' },
+		{ key: 'MAX_SNIPPET_LENGTH', label: 'Лимит символов фрагмента совпадения', type: 'number', min: 4, max: 40, default: 15, desc: 'Макс. кол-во отображаемых символов во фрагментах (совпадений) постов.', needsReload: true },
+		{ key: 'PREVIEW_GREYSCALE_DELAY', label: 'Задержка затенения при взаимодействии с превью', type: 'number', min: 1000, max: 8000, default: 3000, desc: 'Временной интервал (мс) перед началом обработки ссылок.' },
 	]
 };
 
@@ -279,8 +279,7 @@ const FLAG_DEFINITIONS = [
 
 const FLAG_BY_ID = Object.fromEntries(FLAG_DEFINITIONS.map(c => [c.id, c]));
 
-const softAnchorToken = '(?=([^\\p{L}]*\\p{L}+(?:[^\\p{L}]+)?))\\1';
-
+const softAnchorToken = '(?:(?=(?<anchor>[^\\p{L}]*\\p{L}+[^\\p{L}]*))\\k<anchor>)';
 
 // ---------- STYLES ----------
 const KELLY_COLORS = [
@@ -1093,6 +1092,13 @@ input[type="number"].tm-nosnap { -moz-appearance: textfield; }
   border-color: var(--tm-border-accent-hover);
 }
 .tm-ops-btn:focus-visible { outline: none; box-shadow: var(--tm-ring); }
+.tm-ops-test {
+  right: 50px;
+}
+
+.tm-ops-remove {
+  right: 8px;
+}
 
 .tm-highlight {
   background: var(--tm-link);
@@ -1698,6 +1704,8 @@ class FilterEngine {
             if (!built) continue;
             out.push({
                 pattern: built.pattern,
+                sourcePattern: built.sourcePattern,
+                index: i,
                 desc: built.desc,
                 preservePunct: !!built.preservePunct,
                 matchProps: built.matchProps,
@@ -1744,7 +1752,7 @@ class FilterEngine {
             .replace(/!&/g, '(?<!\\p{L})')
             .replace(/&!/g, '(?!\\p{L})')
             .replace(/~+/g, m => `(?:[^\\s]+\\s*?){0,${m.length}}`)
-            .replace(/\s/g, '\\W');
+            .replace(/\s/g, '\\s+');
 
         const startMatch = source.match(/^#(\d*)\D*(\d*)#/);
         const endMatch = source.match(/@(\d*)\D*(\d*)@$/);
@@ -1763,22 +1771,26 @@ class FilterEngine {
             source = source.slice(0, source.length - endMatch[0].length);
         }
 
+        const sourceText = source;
+
         if (leftLow > leftHigh) [leftLow, leftHigh] = [leftHigh, leftLow];
         if (rightLow > rightHigh)[rightLow, rightHigh] = [rightHigh, rightLow];
 
         if (startMatch && endMatch) {
-            source = `(?:^(?:${softAnchorToken}){${leftLow},${leftHigh}}?${source})|(?:${source}(?:${softAnchorToken}){${rightLow},${rightHigh}}?$)`;
+            source = `(?:^(?:${softAnchorToken}){${leftLow},${leftHigh}}?(${source}))|(?:(${source})(?:${softAnchorToken}){${rightLow},${rightHigh}}?$)`;
         } else if (startMatch) {
-            source = `^(?:${softAnchorToken}){${leftLow},${leftHigh}}?${source}`;
+            source = `^(?:${softAnchorToken}){${leftLow},${leftHigh}}?(${source})`;
         } else if (endMatch) {
-            source = `${source}(?:${softAnchorToken}){${rightLow},${rightHigh}}?$`;
+            source = `(${source})(?:${softAnchorToken}){${rightLow},${rightHigh}}?$`;
         }
 
         const mask = (ruleObj.flagMask >>> 0) || 0;
 
         try {
+            const flags = ruleObj.flags?.replace(/g/g, '') || 'ui';
             return {
-                pattern: new RegExp(source, ruleObj.flags?.replace(/g/g, '') || 'ui'),
+                pattern: new RegExp(source, flags),
+                sourcePattern: new RegExp(sourceText, flags),
                 desc: ruleObj.desc || '',
                 flagMask: mask,
                 preservePunct: !!ruleObj.preservePunct,
@@ -3608,7 +3620,7 @@ class Post {
             stripped = parts.length ? parts.join('\n') : '';
         }
 
-        const decoded = decode(stripped).replace(TAG_OR_BR_RE, (_m, br) => br ? '\n' : '').trim();
+        const decoded = decode(stripped).replace(TAG_OR_BR_RE, (_m, blockTag) => blockTag ? '\n' : '').trim();
         const noPunct = decoded.replace(PUNCT_RE, '');
 
         this._cache[4 | mode] = decoded;
@@ -3657,7 +3669,6 @@ const openModal = (() => {
 
 	const activeTimers = new Set();
 	const notifyTimers = new Set();
-	const normalizeCache = new Map();
 
 	return (defaultTab = 'threads') => {
 		if (isTransitioning) {
@@ -3670,7 +3681,6 @@ const openModal = (() => {
 			isTransitioning = true;
 			activeTimers.forEach(id => clearTimeout(id));
 			activeTimers.clear();
-			normalizeCache.clear();
 
 			existing.remove();
 			document.documentElement.style.overflow = '';
@@ -4306,7 +4316,6 @@ const openModal = (() => {
 			for (let i = 0; i < handlers.length; i++) handlers[i]();
 			activeTimers.forEach(id => clearTimeout(id));
 			activeTimers.clear();
-			normalizeCache.clear();
 			overlay.remove();
 			resetScrollLocks();
 			isOpen = false;
@@ -4365,7 +4374,7 @@ const openModal = (() => {
 
 		/* ================== EXPORT / IMPORT / RESET ================== */
 		const buildExportPayload = ({ scope, what }) => {
-			const payload = { version: '1.1.2', exportDate: new Date().toISOString(), scope };
+			const payload = { version: '1.2', exportDate: new Date().toISOString(), scope };
 			if (what === 'rules' || what === 'both') {
 				const { threadRules, replyRules } = readRulesForScope(scope);
 				payload.threadRules = threadRules;
@@ -4580,6 +4589,7 @@ const openModal = (() => {
 			<div class="tm-ops-row" data-id="" tabindex="0" role="button" aria-expanded="false" title="Развернуть">
 				<div class="tm-ops-text"></div>
 				<div class="tm-ops-desc"></div>
+				<button type="button" class="tm-ops-btn tm-ops-test" title="В тестер и к правилу" aria-label="В тестер и к правилу">↗</button>
 				<button type="button" class="tm-ops-btn tm-ops-remove" title="В белый список" aria-label="В белый список">✕</button>
 			</div>
 		`;
@@ -4616,9 +4626,6 @@ const openModal = (() => {
 		const normalizeText = (input = '', preservePunct = false, returnMap = false) => {
 			if (!input) return returnMap ? { normalized: '', map: [] } : '';
 
-			const cacheKey = `${input.slice(0, 100)}|${preservePunct}|${returnMap}`;
-			if (normalizeCache.has(cacheKey)) return normalizeCache.get(cacheKey);
-
 			const outArray = [];
 			const map = new Array(input.length);
 			let prevWasSpace = true, pendingSpace = false, outIdx = 0, mapIdx = 0;
@@ -4640,16 +4647,21 @@ const openModal = (() => {
 				prevWasSpace = false;
 			}
 
-			const result = !returnMap ?
+			return !returnMap ?
 				(outIdx ? outArray.slice(0, outIdx).join('') : '') :
 				{ normalized: outIdx ? outArray.slice(0, outIdx).join('') : '', map: map.slice(0, mapIdx) };
+		};
 
-			if (normalizeCache.size >= CONFIG.MAX_NORM_CACHE_SIZE) {
-				const firstKey = normalizeCache.keys().next().value;
-				normalizeCache.delete(firstKey);
-			}
-			normalizeCache.set(cacheKey, result);
-			return result;
+		const openTesterAndEdit = (item) => {
+			const testInput = qs(rulesTab, '#tm-test-input');
+			if (testInput) testInput.value = item.fullText || '';
+
+			qs(modal, '.tm-tab[data-tab="rules"]')?.click();
+			requestAnimationFrame(() => {
+				const rules = safeGet(editingKey, {}).threadRules || [];
+				const index = item?.filter?.index;
+				if (typeof index === 'number' && rules[index]) ruleActions.edit('thread', index, rules);
+			});
 		};
 
 		const makeSnippet = (filter, fullText) => {
@@ -4658,7 +4670,7 @@ const openModal = (() => {
 			let { normalized, map } = normalizeText(fullText, false, true);
 			let m = null;
 			try {
-				m = filter.pattern.exec(normalized);
+				m = filter.sourcePattern.exec(normalized);
 			} catch {
 				return '';
 			}
@@ -4668,20 +4680,37 @@ const openModal = (() => {
 				normalized = alt.normalized;
 				map = alt.map;
 				try {
-					m = filter.pattern.exec(normalized);
+					m = filter.sourcePattern.exec(normalized);
 				} catch {
 					return '';
 				}
 				if (!m) return '';
 			}
+			let normStart, normEnd, fallbackText;
+			const anchorText = m.groups?.anchor;
+			let targetGroupIdx = -1;
+			for (let i = 1; i < m.length; i++) {
+			    if (anchorText !== undefined && m[i] === anchorText) continue;
+			    if (m[i] !== undefined && m[i].length > 0) targetGroupIdx = i;
+			    else if (targetGroupIdx !== -1) break;
+			}
+		    if (targetGroupIdx !== -1) {
+		        const targetText = m[targetGroupIdx];
+		        normStart = m.index + m[0].indexOf(targetText);
+		        normEnd = normStart + targetText.length;
+				fallbackText = m[targetGroupIdx];
+		    } else {
+		        normStart = m.index;
+		        normEnd = m.index + m[0].length;
+				fallbackText = m[0];
+		    }
 
-			const normStart = m.index;
 			const rawMatchStart = (normStart >= 0 && normStart < map.length) ? map[normStart] : undefined;
-			const endIdx = (normStart + m[0].length) - 1;
-			const rawMatchEnd = (endIdx >= 0 && endIdx < map.length) ? (map[endIdx] + 1) : rawMatchStart;
+		    const endIdx = normEnd - 1;
+		    const rawMatchEnd = (endIdx >= 0 && endIdx < map.length) ? (map[endIdx] + 1) : rawMatchStart;
 
 			if (typeof rawMatchStart !== 'number' || typeof rawMatchEnd !== 'number') {
-				return `<span class="tm-highlight">${escapeHtml(m[0])}</span>`;
+				return `<span class="tm-highlight">${escapeHtml(fallbackText)}</span>`;
 			}
 
 			const snippetStart = Math.max(0, rawMatchStart - CONFIG.SNIPPET_BEFORE_CHARS);
@@ -4739,6 +4768,7 @@ const openModal = (() => {
 						anchor.innerText = ` >>${item.id}`;
 						descEl.appendChild(anchor);
 					}
+                    row._item = item;
 
 					row._renderCollapsed = () => {
 						const htmlContent = makeSnippet(item.filter, fullText);
@@ -4798,6 +4828,10 @@ const openModal = (() => {
 			if (!row) { drag.row = null; return; }
 			if (drag.row === row && drag.moved) { drag.row = null; return; }
 			if (e.target.closest('a,button,input,select,textarea') && !e.target.classList.contains('tm-ops-btn')) return;
+            if (e.target.matches('.tm-ops-btn.tm-ops-test')) {
+                openTesterAndEdit(row._item);
+                return;
+            }
 
 			if (e.target.matches('.tm-ops-btn.tm-ops-remove')) {
 				const id = row.dataset.id;
@@ -4818,6 +4852,13 @@ const openModal = (() => {
 			if (e.key !== 'Enter' && e.key !== ' ') return;
 
 			const isRowBtn = e.target.classList?.contains('tm-ops-btn');
+            if (isRowBtn && e.target.matches('.tm-ops-test')) {
+                e.preventDefault();
+                const row = e.target.closest('.tm-ops-row'); if (!row) return;
+                openTesterAndEdit(row._item);
+                return;
+            }
+
 			if (isRowBtn && e.target.matches('.tm-ops-remove')) {
 				e.preventDefault();
 				const row = e.target.closest('.tm-ops-row'); if (!row) return;
@@ -4918,7 +4959,6 @@ const openModal = (() => {
 						<div class="tm-flags-display" id="tm-flags-display"><span class="tm-flags-placeholder">Выберите флаги...</span></div>
 						<div class="tm-flags-dropdown" id="tm-flags-dropdown"></div>
 					</div>
-					<small>Клик вкл, Shift/Ctrl+клик искл. Не выбрано = игнор.</small>
 				</div>
 
 				<div class="tm-rule-row">
@@ -5308,11 +5348,27 @@ const openModal = (() => {
 				}
 				const preservePunct = !!compiled.preservePunct;
 				const normalized = normalizeText(testInput, preservePunct, false);
-				const match = normalized.match(compiled.pattern);
-				if (match) {
+				const m = normalized.match(compiled.pattern);
+				if (m) {
 					const { map } = normalizeText(testInput, preservePunct, true);
-					const rawStart = map[match.index];
-					const rawEnd = map[match.index + match[0].length - 1];
+                    let normStart, normEnd;
+					const anchorText = m.groups?.anchor;
+					let targetGroupIdx = -1;
+					for (let i = 1; i < m.length; i++) {
+					    if (anchorText !== undefined && m[i] === anchorText) continue;
+					    if (m[i] !== undefined && m[i].length > 0) targetGroupIdx = i;
+					    else if (targetGroupIdx !== -1) break;
+					}
+				    if (targetGroupIdx !== -1) {
+				        const targetText = m[targetGroupIdx];
+				        normStart = m.index + m[0].indexOf(targetText);
+				        normEnd = normStart + targetText.length;
+				    } else {
+				        normStart = m.index;
+				        normEnd = m.index + m[0].length;
+				    }
+                    const rawStart = map[normStart];
+                    const rawEnd = map[normEnd - 1];
 					if (typeof rawStart !== 'number' || typeof rawEnd !== 'number') {
 						resultDiv.innerHTML = '<div class="tm-test-error"><strong>Ошибка:</strong> Не удалось сопоставить</div>';
 						return;
@@ -5323,7 +5379,6 @@ const openModal = (() => {
 							<div class="tm-test-preview">${escapeHtml(testInput.slice(0, rawStart))}<span class="tm-highlight">${escapeHtml(testInput.slice(rawStart, rawEnd + 1))}</span>${escapeHtml(testInput.slice(rawEnd + 1))}</div>
 							<div class="tm-test-details">
 								<div>Оригинальный: <code>${escapeHtml(ruleObj.pattern)}</code></div>
-								${ruleObj.expandCyrillic ? `<div>Раскрытый: <code>${escapeHtml(testPattern)}</code></div>` : ''}
 								<div>Скомпилированный: <code>${escapeHtml(compiled.pattern.source)}</code></div>
 								<div>Флаги: <code>${escapeHtml(compiled.pattern.flags)}</code></div>
 								${compiled.desc ? `<div>Категория: <strong>${escapeHtml(compiled.desc)}</strong></div>` : ''}
@@ -5336,10 +5391,9 @@ const openModal = (() => {
 							<strong>✗ Нет совпадений</strong>
 							<div class="tm-test-details">
 								<div>Оригинальный: <code>${escapeHtml(ruleObj.pattern)}</code></div>
-								${ruleObj.expandCyrillic ? `<div>Раскрытый: <code>${escapeHtml(testPattern.length > 100 ? testPattern.slice(0, 100) + '...' : testPattern)}</code></div>` : ''}
-								<div>Скомпилированный: <code>${escapeHtml(compiled.pattern.source.length > 100 ? compiled.pattern.source.slice(0, 100) + '...' : compiled.pattern.source)}</code></div>
+								<div>Скомпилированный: <code>${escapeHtml(compiled.pattern.source)}</code></div>
 								<div>Флаги: <code>${escapeHtml(compiled.pattern.flags)}</code></div>
-								<div>Нормализованный (200 символов): <code>${escapeHtml(normalized.slice(0, 200))}${normalized.length > 200 ? '...' : ''}</code></div>
+								${compiled.desc ? `<div>Категория: <strong>${escapeHtml(compiled.desc)}</strong></div>` : ''}
 							</div>
 						</div>
 					`;
@@ -5366,9 +5420,9 @@ const openModal = (() => {
 
 					const preservePunct = !!compiled.preservePunct;
 					const normalized = normalizeText(testInput, preservePunct, false);
-					const match = normalized.match(compiled.pattern);
+					const m = normalized.match(compiled.pattern);
 
-					if (match) matches.push({ rule, index: i, match, normalized, preservePunct });
+					if (m) matches.push({ rule, compiled, index: i, m, normalized, preservePunct });
 				} catch (e) {
 					errors.push({ rule, index: i, error: e, stack: e?.stack });
 				}
@@ -5379,10 +5433,26 @@ const openModal = (() => {
 			if (matches.length > 0) {
 				html += '<div class="tm-test-success"><strong>✓ Найдено совпадений: ' + matches.length + '</strong><div class="tm-test-multi-results">';
 				for (let i = 0; i < matches.length; i++) {
-					const { rule, match, preservePunct } = matches[i];
+					const { rule, compiled, m, preservePunct } = matches[i];
 					const { map } = normalizeText(testInput, preservePunct, true);
-					const rawStart = map[match.index];
-					const rawEnd = map[match.index + match[0].length - 1];
+	                let normStart, normEnd;
+					const anchorText = m.groups?.anchor;
+					let targetGroupIdx = -1;
+					for (let i = 1; i < m.length; i++) {
+					    if (anchorText !== undefined && m[i] === anchorText) continue;
+					    if (m[i] !== undefined && m[i].length > 0) targetGroupIdx = i;
+					    else if (targetGroupIdx !== -1) break;
+					}
+					if (targetGroupIdx !== -1) {
+				        const targetText = m[targetGroupIdx];
+				        normStart = m.index + m[0].indexOf(targetText);
+				        normEnd = normStart + targetText.length;
+				    } else {
+				        normStart = m.index;
+				        normEnd = m.index + m[0].length;
+				    }
+                    const rawStart = map[normStart];
+                    const rawEnd = map[normEnd - 1];
 
 					if (typeof rawStart === 'number' && typeof rawEnd === 'number') {
 						const displayPattern = rule.pattern.length > 40 ? rule.pattern.slice(0, 40) + '...' : rule.pattern;
@@ -6012,7 +6082,7 @@ const openModal = (() => {
 				<div class="tm-config-field">
 					<label>
 						<div class="tm-config-title">Позиция кнопки</div>
-						<div class="tm-config-desc tm-subtle">Расположение кнопки менеджера</div>
+						<div class="tm-config-desc tm-subtle">Расположение кнопки менеджера.</div>
 						<div class="tm-flags-multiselect" id="tm-manager-pos-dd">
 							<div class="tm-flags-display">
 								<span class="tm-dd-current">${escapeHtml(posOptions.find(p => p.v === pos)?.t || 'Вверху слева')}</span>
