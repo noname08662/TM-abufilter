@@ -5422,7 +5422,7 @@ const openModal = (() => {
 					const normalized = normalizeText(testInput, preservePunct, false);
 					const m = normalized.match(compiled.pattern);
 
-					if (m) matches.push({ rule, compiled, index: i, m, normalized, preservePunct });
+					if (m) matches.push({ rule, index: i, m, normalized, preservePunct });
 				} catch (e) {
 					errors.push({ rule, index: i, error: e, stack: e?.stack });
 				}
@@ -5433,7 +5433,7 @@ const openModal = (() => {
 			if (matches.length > 0) {
 				html += '<div class="tm-test-success"><strong>✓ Найдено совпадений: ' + matches.length + '</strong><div class="tm-test-multi-results">';
 				for (let i = 0; i < matches.length; i++) {
-					const { rule, compiled, m, preservePunct } = matches[i];
+					const { rule, m, preservePunct } = matches[i];
 					const { map } = normalizeText(testInput, preservePunct, true);
 	                let normStart, normEnd;
 					const anchorText = m.groups?.anchor;
